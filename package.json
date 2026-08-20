@@ -1,0 +1,19 @@
+{
+  "name": "zc-daizhang-system",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@cloudbase/js-sdk": "^1.7.0",
+    "html2canvas": "^1.4.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}

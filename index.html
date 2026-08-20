@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>掌兴代账 · 客户服务管理系统</title>
+</head>
+<body>
+  <div id="app"></div>
+  <pre id="err" style="position:fixed;inset:auto 0 0 0;background:#7f1d1d;color:#fff;padding:8px 14px;font-size:12px;max-height:45vh;overflow:auto;z-index:999;display:none;white-space:pre-wrap"></pre>
+  <script>
+    window.addEventListener('error', e => { const el = document.getElementById('err'); el.style.display='block'; el.textContent += '[ERROR] ' + e.message + ' @' + (e.filename||'') + ':' + (e.lineno||'') + '\n'; });
+    window.addEventListener('unhandledrejection', e => { const el = document.getElementById('err'); el.style.display='block'; el.textContent += '[REJECT] ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason) + '\n'; });
+  </script>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
