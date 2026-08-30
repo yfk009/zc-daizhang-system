@@ -3,7 +3,8 @@
 // 可选：AI 大模型解析（设置页配置接口后启用）
 import { esc, toast } from '../ui.js';
 import { state, loadAll, prevDataMonth } from '../app-state.js';
-import { store } from '../db.js';
+import { store, newId } from '../db.js';
+import { buildMonthTasks, tierOf } from '../templates.js';
 import {
   detectHeaderRow, detectMode, guessColumns, matchClient,
   parseNumber, parsePastedText, extractClientFinancials,
@@ -11,14 +12,15 @@ import {
 
 let wbData = null;        // { sheetNames, sheets }
 let curSheet = '';
-let mapping = { name: -1, revenue: -1, cost: -1, tax: -1 };
+let mapping = { name: -1, revenue: -1, cost: -1, tax: -1, fee: -1, annualRev: -1 };
 let dataMonth = '';
 let pasteOn = false;
 let mode = 'A';           // A 列式明细 / B 单户报表
 let singleClient = null;  // B 模式客户
 let singleVals = { revenue: null, cost: null, tax: null };
 let headers = [], dataRows = [], headerRowIdx = 0;
-let matched = [];         // [{name, clientId, revenue, cost, taxTotal}]
+let matched = [];         // [{name, clientId, revenue, cost, taxTotal, fee, annualRev}]
+let lastPipeline = null;  // 一键处理结果摘要
 
 export function render(root, ctx) {
   if (!dataMonth) dataMonth = prevDataMonth();
@@ -85,6 +87,7 @@ function onPaste(root, ctx) {
 function analyze(root, ctx) {
   const rows = wbData.sheets[curSheet] || [];
   if (!rows.length) { drawBody(root, ctx); return; }
+  lastPipeline = null; // 新解析清空上次的处理摘要
   headerRowIdx = detectHeaderRow(rows);
   headers = rows[headerRowIdx] || [];
   dataRows = rows.slice(headerRowIdx + 1).filter(r => r.some(c => String(c ?? '').trim() !== ''));
@@ -102,6 +105,8 @@ function analyze(root, ctx) {
 
 function doMatch() {
   matched = [];
+  // 年度口径列与月度收入列若是同一列，视为名单表：月度财务收入不落库（防年值当月值）
+  const revIsAnnual = mapping.revenue >= 0 && mapping.revenue === mapping.annualRev;
   for (const r of dataRows) {
     const name = String(r[mapping.name] ?? '').trim();
     if (!name || name === 'undefined' || name === '合计' || /合\s*计|总\s*计/.test(name)) continue;
@@ -109,9 +114,11 @@ function doMatch() {
     matched.push({
       name,
       clientId: client ? client._id : null,
-      revenue: mapping.revenue >= 0 ? parseNumber(r[mapping.revenue]) : null,
+      revenue: !revIsAnnual && mapping.revenue >= 0 ? parseNumber(r[mapping.revenue]) : null,
       cost: mapping.cost >= 0 ? parseNumber(r[mapping.cost]) : null,
       taxTotal: mapping.tax >= 0 ? parseNumber(r[mapping.tax]) : null,
+      fee: mapping.fee >= 0 ? parseNumber(r[mapping.fee]) : null,
+      annualRev: mapping.annualRev >= 0 ? parseNumber(r[mapping.annualRev]) : null,
     });
   }
 }
@@ -140,12 +147,14 @@ function drawModeA(body, root, ctx) {
     + cols.map(c => `<option value="${c.i}" ${sel === c.i ? 'selected' : ''}>${allowName && mapping.name === c.i ? '👤 ' : ''}${c.label}</option>`).join('');
   const smartTag = v => v >= 0 ? '<span class="st done">🤖 已识别</span>' : '<span class="st todo">未识别·请选</span>';
   const emptyLibTip = state.customers.length === 0
-    ? '<div class="banner" style="margin:0 0 10px">⚠️ 客户库为空：无法自动匹配客户。请先到「客户分层」新增客户，或「设置」页初始化/导入客户，再回来识别。</div>' : '';
+    ? '<div class="banner" style="margin:0 0 10px">💡 客户库为空？没关系——点下方「🚀 一键导入并自动处理」，系统会按表格自动建档、分层并串起后续全流程。</div>' : '';
+  const resultBanner = lastPipeline
+    ? `<div class="msgbox" style="margin:0 0 10px">🚀 <b>处理完成</b>：${lastPipeline.text}</div>` : '';
   body.innerHTML = `
   ${sheetTabsHtml()}
   <div class="panel">
     <h3>🔍 智能识别结果 <span class="st done">列式明细表</span> <span class="muted">表头行：第 ${headerRowIdx + 1} 行 ｜ 识别到 ${matched.length} 行数据</span></h3>
-    ${emptyLibTip}
+    ${resultBanner}${emptyLibTip}
     <div class="filters">
       <label style="margin:0">客户列：</label><select id="mName">${opt(mapping.name, false)}</select>${smartTag(mapping.name)}
       <label style="margin:0 0 0 10px">收入列：</label><select id="mRev">${opt(mapping.revenue)}</select>${smartTag(mapping.revenue)}
@@ -163,8 +172,9 @@ function drawModeA(body, root, ctx) {
       <td>${m.revenue ?? '—'}</td><td>${m.cost ?? '—'}</td><td>${m.taxTotal ?? '—'}</td>
     </tr>`).join('')}</tbody></table>
     <div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-      <button class="btn" id="impSave">💾 保存 ${matched.filter(m => m.clientId).length} 条到 ${dataMonth}</button>
-      <span class="muted">红色行未匹配到客户，可下拉指定或留空跳过（含"合计"行已自动剔除）</span>
+      <button class="btn" id="autoBtn">🚀 一键导入并自动处理</button>
+      <button class="btn ghost" id="impSave">仅保存财务数据（精细模式）</button>
+      <span class="muted">一键 = 自动建档客户+分层+财务落库（${dataMonth}）+税金预填（${state.month}）+生成月度任务；红色行未匹配，一键时将自动建档</span>
     </div>
   </div>`;
 
@@ -180,10 +190,80 @@ function drawModeA(body, root, ctx) {
   body.querySelectorAll('.rowMatch').forEach(s => s.onchange = e => {
     const m = matched.find(x => x.name === s.dataset.row);
     if (m) m.clientId = e.target.value || null;
-    const btn = body.querySelector('#impSave');
-    if (btn) btn.textContent = `💾 保存 ${matched.filter(x => x.clientId).length} 条到 ${dataMonth}`;
   });
+  body.querySelector('#autoBtn').onclick = () => autoProcess(root, ctx);
   body.querySelector('#impSave').onclick = saveImport;
+}
+
+/* ---------- 🚀 一键管线：拆分→建档→分层→财务→税金→任务 ---------- */
+async function autoProcess(root, ctx) {
+  if (!matched.length) { toast('没有可处理的行'); return; }
+  const s = state.settings;
+  const created = [], finDocs = [], taxDocs = [];
+  let matchedCnt = 0;
+
+  for (const m of matched) {
+    let client = m.clientId ? state.customers.find(c => c._id === m.clientId) : null;
+    if (client) { matchedCnt++; }
+    else {
+      // 自动建档：分层依据 年营业额列 → 月收入×12 → 有税金(S2) → 零申报(S1)
+      let annualRev = m.annualRev ?? null;
+      let tier;
+      if (annualRev != null) tier = tierOf(annualRev);
+      else if (m.revenue) { annualRev = Math.round(m.revenue * 12); tier = tierOf(annualRev); }
+      else if (m.taxTotal) tier = 'S2';
+      else { annualRev = 0; tier = 'S1'; }
+      client = {
+        _id: newId('c'), name: m.name, taxNo: '', source: '表格导入',
+        revenue: annualRev || 0, annualFee: m.fee || 0, monthlyFee: 0,
+        tier, tierManual: false, archived: false,
+        ownerRole: tier === 'S1' ? 'assist' : 'lead',
+        owner: tier === 'S1' ? (s.ownersMap.assist || '') : (s.ownersMap.lead || ''),
+        contact: '', phone: '', contractStart: '', contractEnd: '',
+      };
+      await store.upsert('customers', client);
+      created.push(client);
+    }
+    // 财务数据落库（有任一数值才建）
+    if (m.revenue != null || m.cost != null || m.taxTotal != null) {
+      finDocs.push({
+        _id: `f_${dataMonth}_${client._id}`, month: dataMonth, clientId: client._id, clientName: client.name,
+        revenue: m.revenue || 0, cost: m.cost || 0, taxTotal: m.taxTotal || 0,
+        importedAt: new Date().toISOString().slice(0, 10),
+      });
+    }
+    // 税金预填（服务月 taxConfirm，税金>0 才建，状态=金额就绪待发送）
+    if (m.taxTotal != null && m.taxTotal > 0) {
+      taxDocs.push({
+        _id: `x_${state.month}_${client._id}`, month: state.month, clientId: client._id, clientName: client.name,
+        state: 'ready', amounts: { vat: 0, sur: 0, it: 0, cit: 0, total: m.taxTotal },
+      });
+    }
+  }
+
+  if (finDocs.length) await store.upsertMany('financials', finDocs);
+  if (taxDocs.length) await store.upsertMany('taxConfirm', taxDocs);
+
+  // 刷新客户库（后续任务生成要用）
+  state.customers = await store.list('customers');
+
+  // 生成当月任务（幂等：已存在跳过）
+  const existTasks = await store.list('monthTasks', { month: state.month });
+  const existIds = new Set(existTasks.map(t => t._id));
+  const docs = buildMonthTasks(state.month, state.customers, s.ownersMap).filter(d => !existIds.has(d._id));
+  if (docs.length) await store.upsertMany('monthTasks', docs);
+  await loadAll();
+
+  const tierDist = { S3: 0, S2: 0, S1: 0 };
+  created.forEach(c => tierDist[c.tier]++);
+  lastPipeline = {
+    text:
+      `建档 <b>${created.length}</b> 家（S3×${tierDist.S3} S2×${tierDist.S2} S1×${tierDist.S1}）｜` +
+      `匹配既有 <b>${matchedCnt}</b> 家 ｜ 财务落库 <b>${finDocs.length}</b> 条（${dataMonth}）｜ ` +
+      `税金预填 <b>${taxDocs.length}</b> 户（${state.month}）｜ 月度任务 <b>${docs.length ? '新生成 ' + docs.length + ' 项' : '已存在'}</b>`,
+  };
+  drawBody(root, ctx);
+  toast('🚀 一键处理完成，各页面已就绪');
 }
 
 function drawModeB(body, root, ctx) {

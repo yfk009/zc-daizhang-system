@@ -58,9 +58,11 @@ export function detectHeaderRow(rows, maxScan = 12) {
 const REV_RE = /收入|销项|开票|销售额|营业额|主营业务/;
 const COST_RE = /成本|进项|采购|购进|材料|劳务/;
 const TAX_RE = /税/;
+const FEE_RE = /年费|记账费|代理费|服务费|年度费/;
+const ANNUAL_REV_RE = /年.{0,2}营业额|营业额|年销售额|年开票|年产值/;
 
 // 列角色识别（列式明细表）
-// 返回 { name, revenue, cost, tax, numericCols, nameMatchRate }
+// 返回 { name, revenue, cost, tax, fee, annualRev, numericCols, nameMatchRate }
 export function guessColumns(headers, dataRows, customers) {
   const n = Math.max(headers.length, dataRows.reduce((m, r) => Math.max(m, r.length), 0));
   const info = [];
@@ -89,6 +91,7 @@ export function guessColumns(headers, dataRows, customers) {
   };
   return {
     name, revenue: pick(REV_RE), cost: pick(COST_RE), tax: pick(TAX_RE),
+    fee: pick(FEE_RE), annualRev: pick(ANNUAL_REV_RE),
     numericCols: numCols.map(ci => ci.c),
     nameMatchRate: name >= 0 ? info[name].matchRate : 0,
   };
