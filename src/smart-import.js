@@ -22,7 +22,21 @@ export function normName(s) {
     .replace(/\s+/g, '');
 }
 
-// 与客户库匹配：精确 → 双向包含（原名）→ 双向包含（归一化）
+// 最长公共连续子串长度（名称都短，双循环滑窗足够）
+function lcsLen(a, b) {
+  if (!a || !b) return 0;
+  let max = 0;
+  for (let i = 0; i < a.length; i++) {
+    for (let j = 0; j < b.length; j++) {
+      let k = 0;
+      while (i + k < a.length && j + k < b.length && a[i + k] === b[j + k]) k++;
+      if (k > max) max = k;
+    }
+  }
+  return max;
+}
+
+// 与客户库匹配：精确 → 双向包含（原名）→ 双向包含（归一化）→ 最长公共子串（≥5字且占较短名60%）
 export function matchClient(raw, customers) {
   const t = cellText(raw);
   if (!t || !customers || !customers.length) return null;
@@ -31,13 +45,16 @@ export function matchClient(raw, customers) {
   const nt = normName(t);
   if (nt.length < 2) return null;
   let fallback = null;
+  let bestLcs = 0, bestLcsClient = null;
   for (const c of customers) {
     if (t.includes(c.name) || c.name.includes(t)) return c;
     const nc = normName(c.name);
     if (!nc) continue;
     if ((nt.includes(nc) || nc.includes(nt)) && nc.length >= 2) fallback = fallback || c;
+    const l = lcsLen(nt, nc);
+    if (l >= 5 && l / Math.min(nt.length, nc.length) >= 0.6 && l > bestLcs) { bestLcs = l; bestLcsClient = c; }
   }
-  return fallback;
+  return fallback || bestLcsClient;
 }
 
 // 表头行定位：关键词命中最多且非纯数字的行

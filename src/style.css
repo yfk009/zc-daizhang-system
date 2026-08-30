@@ -46,6 +46,8 @@ th { text-align:left; padding:8px 9px; background:#f8fafc; color:#64748b; font-w
 td { padding:8px 9px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
 tr.overdue td { background:#fef2f2; }
 tr.blocked td { background:#fff7ed; }
+tr.newrow td { background:#f0f9ff; }
+tr.okrow td { background:#ffffff; }
 tr.batch-sub td { background:#fafcff; padding:4px 9px; }
 tr:hover td { background:#f8fafc; }
 tr.overdue:hover td, tr.blocked:hover td { filter:brightness(.98); }

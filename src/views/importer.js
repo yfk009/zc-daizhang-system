@@ -166,19 +166,28 @@ function drawModeA(body, root, ctx) {
         : '<span class="muted">💡 在设置页配置 AI 接口后，可让大模型解析任意复杂表格</span>'}
     </div>
     <table><thead><tr><th>表格中的名称</th><th>匹配到系统客户</th><th>收入</th><th>成本</th><th>税金合计</th></tr></thead>
-    <tbody>${matched.slice(0, 120).map(m => `<tr class="${m.clientId ? '' : 'blocked'}">
+    <tbody>${matched.slice(0, 120).map(m => `<tr class="${m.clientId ? 'okrow' : 'newrow'}">
       <td>${esc(m.name)}</td>
-      <td><select class="rowMatch" data-row="${esc(m.name)}"><option value="">— 未匹配（跳过） —</option>${state.customers.map(c => `<option value="${c._id}" ${c._id === m.clientId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></td>
+      <td><select class="rowMatch" data-row="${esc(m.name)}">
+        ${m.clientId ? '' : '<option value="" selected>🆕 一键时自动新建客户</option>'}
+        ${state.customers.map(c => `<option value="${c._id}" ${c._id === m.clientId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+      </select></td>
       <td>${m.revenue ?? '—'}</td><td>${m.cost ?? '—'}</td><td>${m.taxTotal ?? '—'}</td>
     </tr>`).join('')}</tbody></table>
     <div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-      <button class="btn" id="autoBtn">🚀 一键导入并自动处理</button>
+      <button class="btn" id="autoBtn">🚀 一键匹配·建档·完成全流程</button>
+      <button class="btn ghost" id="reMatch">🔗 一键匹配（重试未匹配行）</button>
       <button class="btn ghost" id="impSave">仅保存财务数据（精细模式）</button>
-      <span class="muted">一键 = 自动建档客户+分层+财务落库（${dataMonth}）+税金预填（${state.month}）+生成月度任务；红色行未匹配，一键时将自动建档</span>
     </div>
+    <p class="muted" style="margin-top:8px">匹配规则：表格名与客户库自动对齐（支持简称/别名/括号注记）→ 匹配上的直接挂数据；库中没有的行，点🚀时<b>自动新建客户档案并分层</b>，全程无需手动逐行选择。手工下拉仅作精确指定用。</p>
   </div>`;
 
   body.querySelectorAll('[data-sheet]').forEach(b => b.onclick = () => { curSheet = b.dataset.sheet; analyze(root, ctx); });
+  body.querySelector('#reMatch').onclick = () => {
+    doMatch(); drawBody(root, ctx);
+    const n = matched.filter(m => m.clientId).length;
+    toast(n ? `🔗 匹配完成：${n}/${matched.length} 行已对上客户库` : '客户库中暂无可匹配客户——点🚀将自动建档');
+  };
   const M = { mName: 'name', mRev: 'revenue', mCost: 'cost', mTax: 'tax' };
   Object.entries(M).forEach(([id, k]) => {
     const el = body.querySelector('#' + id);

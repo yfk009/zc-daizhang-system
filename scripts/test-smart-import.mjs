@@ -25,6 +25,12 @@ eq('反向包含（表格名是全称、库是简称场景兜底）', !!matchCli
 eq('个体户括号注记', matchClient('盘龙区某茶叶经营部', customers), customers[2]);
 eq('完全无关', matchClient('不知道什么公司', customers), null);
 
+// 2.5) LCS 模糊匹配（差异较大的别名/简称）
+const cust2 = [{ _id: 'k1', name: '昆明鑫城建筑工程有限公司' }, { _id: 'k2', name: '云南盛和文化传播股份有限公司' }];
+eq('LCS别名匹配', matchClient('鑫城建筑工程', cust2), cust2[0]);
+eq('LCS差异名匹配', matchClient('盛和文化传媒', cust2), cust2[1]);
+eq('LCS不误配', matchClient('完全不同的名字啊', cust2), null);
+
 // 3) 表头行定位（前两行是标题/空行）
 const rowsA = [
   ['云南某某代账公司客户数据导出', '', ''],
