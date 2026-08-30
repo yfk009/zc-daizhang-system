@@ -123,8 +123,8 @@ function drawBody(root, ctx) {
     body.innerHTML = '<div class="muted" style="text-align:center;padding:24px">选择文件或粘贴表格后，系统自动分析并展示识别结果</div>';
     return;
   }
-  if (mode === 'B') { drawModeB(body, ctx); return; }
-  drawModeA(body, ctx);
+  if (mode === 'B') { drawModeB(body, root, ctx); return; }
+  drawModeA(body, root, ctx);
 }
 
 function sheetTabsHtml() {
@@ -133,16 +133,19 @@ function sheetTabsHtml() {
     : '';
 }
 
-function drawModeA(body, ctx) {
+function drawModeA(body, root, ctx) {
   const conf = aiConf();
   const cols = headers.map((h, i) => ({ i, label: `${esc(String(h).slice(0, 14)) || '第' + (i + 1) + '列'}` }));
   const opt = (sel, allowName) => '<option value="-1">（不导入）</option>'
     + cols.map(c => `<option value="${c.i}" ${sel === c.i ? 'selected' : ''}>${allowName && mapping.name === c.i ? '👤 ' : ''}${c.label}</option>`).join('');
   const smartTag = v => v >= 0 ? '<span class="st done">🤖 已识别</span>' : '<span class="st todo">未识别·请选</span>';
+  const emptyLibTip = state.customers.length === 0
+    ? '<div class="banner" style="margin:0 0 10px">⚠️ 客户库为空：无法自动匹配客户。请先到「客户分层」新增客户，或「设置」页初始化/导入客户，再回来识别。</div>' : '';
   body.innerHTML = `
   ${sheetTabsHtml()}
   <div class="panel">
     <h3>🔍 智能识别结果 <span class="st done">列式明细表</span> <span class="muted">表头行：第 ${headerRowIdx + 1} 行 ｜ 识别到 ${matched.length} 行数据</span></h3>
+    ${emptyLibTip}
     <div class="filters">
       <label style="margin:0">客户列：</label><select id="mName">${opt(mapping.name, false)}</select>${smartTag(mapping.name)}
       <label style="margin:0 0 0 10px">收入列：</label><select id="mRev">${opt(mapping.revenue)}</select>${smartTag(mapping.revenue)}
@@ -183,7 +186,7 @@ function drawModeA(body, ctx) {
   body.querySelector('#impSave').onclick = saveImport;
 }
 
-function drawModeB(body, ctx) {
+function drawModeB(body, root, ctx) {
   const c = singleClient;
   const conf = aiConf();
   body.innerHTML = `
