@@ -46,6 +46,21 @@ export function render(root, ctx) {
         <p class="muted" style="margin-top:10px">单机模式下数据存于本机浏览器，请每周导出一次备份；切换电脑/浏览器用备份迁移。</p>
       </div>
       <div class="panel">
+        <h3>🤖 AI 接口（智能导入解析用，可选）</h3>
+        <label>接口地址（OpenAI 兼容 /chat/completions）</label>
+        <input id="aiBase" placeholder="https://open.bigmodel.cn/api/paas/v4" style="width:100%">
+        <label>模型</label>
+        <input id="aiModel" placeholder="glm-4-flash" style="width:100%">
+        <label>API Key</label>
+        <input id="aiKey" type="password" placeholder="sk-..." style="width:100%">
+        <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button class="btn" id="aiSave">保存配置</button>
+          <button class="btn ghost" id="aiClear">清除</button>
+          <span class="st" id="aiState"></span>
+        </div>
+        <p class="muted" style="margin-top:8px">仅存本机浏览器（不会进仓库/云端/备份 JSON），用于「数据导入」页的 AI 解析任意表格。无 Key 时智能识别（离线）依然可用。</p>
+      </div>
+      <div class="panel">
         <h3>⚠️ 危险操作</h3>
         <button class="btn danger" id="btnWipe">🗑 清空全部数据</button>
         <p class="muted" style="margin-top:8px">清除全部客户、任务、税金确认、财务数据、阿米巴批次（不可恢复，请先导出备份）；保留团队与参数设置。清空后如需 68 家演示数据，点上方「初始化 68 家客户」。</p>
@@ -72,6 +87,36 @@ export function render(root, ctx) {
     if (r.empty) { toast('种子数据为空：本地运行 node scripts/gen-seed.mjs 生成后再试（客户隐私不入库）'); return; }
     toast(r.skipped ? '已存在客户库' : `✓ 已初始化 ${r.count} 家`); window.__rerender?.();
   };
+  // AI 接口配置（localStorage zx_ai_conf，独立于业务数据备份）
+  try {
+    const ai = JSON.parse(localStorage.getItem('zx_ai_conf') || 'null') || {};
+    root.querySelector('#aiBase').value = ai.base || '';
+    root.querySelector('#aiModel').value = ai.model || '';
+    root.querySelector('#aiKey').value = ai.apiKey || '';
+    const st = root.querySelector('#aiState');
+    st.textContent = ai.apiKey ? '✓ 已配置' : '未配置（离线智能识别可用）';
+    st.className = 'st ' + (ai.apiKey ? 'done' : 'todo');
+  } catch { /* ignore */ }
+  root.querySelector('#aiSave').onclick = () => {
+    const conf = {
+      base: root.querySelector('#aiBase').value.trim() || 'https://open.bigmodel.cn/api/paas/v4',
+      model: root.querySelector('#aiModel').value.trim() || 'glm-4-flash',
+      apiKey: root.querySelector('#aiKey').value.trim(),
+    };
+    localStorage.setItem('zx_ai_conf', JSON.stringify(conf));
+    const st = root.querySelector('#aiState');
+    st.textContent = conf.apiKey ? '✓ 已配置' : '未配置（离线智能识别可用）';
+    st.className = 'st ' + (conf.apiKey ? 'done' : 'todo');
+    toast(conf.apiKey ? '✓ AI 配置已保存（仅存本机）' : '已保存（未填 Key，AI 解析不启用）');
+  };
+  root.querySelector('#aiClear').onclick = () => {
+    localStorage.removeItem('zx_ai_conf');
+    root.querySelector('#aiBase').value = ''; root.querySelector('#aiModel').value = ''; root.querySelector('#aiKey').value = '';
+    const st = root.querySelector('#aiState');
+    st.textContent = '未配置（离线智能识别可用）'; st.className = 'st todo';
+    toast('AI 配置已清除');
+  };
+
   // 清空全部数据：输入"清空"二次确认
   root.querySelector('#btnWipe').onclick = () => {
     let mask = document.getElementById('wipeMask');
