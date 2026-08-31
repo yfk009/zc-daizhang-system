@@ -73,7 +73,10 @@ export async function generate() {
     return;
   }
   const s = state.settings;
-  const docs = buildMonthTasks(state.month, state.customers, s.ownersMap);
+  const docs = buildMonthTasks(state.month, state.customers, s.ownersMap, {
+    disabledKeys: s.disabledTemplateKeys || [],
+    customTemplates: s.customTemplates || [],
+  });
   // 幂等：跳过已存在的
   const existIds = new Set(state.tasks.map(t => t._id));
   const fresh = docs.filter(d => !existIds.has(d._id));

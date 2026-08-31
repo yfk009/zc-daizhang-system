@@ -259,7 +259,10 @@ async function autoProcess(root, ctx) {
   // 生成当月任务（幂等：已存在跳过）
   const existTasks = await store.list('monthTasks', { month: state.month });
   const existIds = new Set(existTasks.map(t => t._id));
-  const docs = buildMonthTasks(state.month, state.customers, s.ownersMap).filter(d => !existIds.has(d._id));
+  const docs = buildMonthTasks(state.month, state.customers, s.ownersMap, {
+    disabledKeys: s.disabledTemplateKeys || [],
+    customTemplates: s.customTemplates || [],
+  }).filter(d => !existIds.has(d._id));
   if (docs.length) await store.upsertMany('monthTasks', docs);
   await loadAll();
 

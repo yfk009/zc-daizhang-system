@@ -29,6 +29,8 @@ export const DEFAULT_SETTINGS = {
     baseSalary: 3000, perfOn: false,
   },
   evidenceRequired: true,
+  customTemplates: [],        // 自定义任务模板（四周看板添加，长期生效）
+  disabledTemplateKeys: [],   // 停用的模板 key（内置或自定义）
 };
 
 export async function loadAll() {

@@ -56,5 +56,17 @@ eq('每家 S2/S3 都有申报任务', docs.filter(d => d.key === 'filing').lengt
 eq('S3 每家有预算编制任务', docs.filter(d => d.key === 'budget').length, s3c.length);
 eq('S3 沟通会指派老板', docs.filter(d => d.key === 'meeting' && d.owner === '老板').length, s3c.length);
 
+// 6) 看板编辑：自定义模板 + 停用过滤
+const cxTpl = { key: 'cx_test1', name: '发工资表收集提醒', week: 2, due: 5, role: 'lead', tiers: ['ALL'], type: 'client' };
+const withCustom = buildMonthTasks('2026-09', customers, ownersMap, { customTemplates: [cxTpl] });
+eq('自定义模板逐户生成', withCustom.filter(d => d.key === 'cx_test1' && d.type === 'client').length, 68);
+const cxTeam = { key: 'cx_test2', name: '内部沟通会', week: 4, due: 28, role: 'boss', tiers: ['ALL'], type: 'team' };
+const withBoth = buildMonthTasks('2026-09', customers, ownersMap, { customTemplates: [cxTpl, cxTeam] });
+eq('自定义团队模板单条', withBoth.filter(d => d.key === 'cx_test2').length, 1);
+const withDis = buildMonthTasks('2026-09', customers, ownersMap, { customTemplates: [cxTpl], disabledKeys: ['cx_test1', 'filing'] });
+eq('停用自定义模板后不生成', withDis.filter(d => d.key === 'cx_test1').length, 0);
+eq('停用内置模板后不生成', withDis.filter(d => d.key === 'filing').length, 0);
+eq('停用不影响其他任务', withDis.filter(d => d.key === 'taxconfirm').length, s2c.length + s3c.length);
+
 console.log(`\n结果：${pass} 通过，${fail} 失败`);
 process.exit(fail ? 1 : 0);

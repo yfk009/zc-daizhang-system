@@ -70,7 +70,11 @@ export const EVIDENCE_TYPES = [
 
 // 生成某月全部任务（幂等：已有 key 的跳过）
 // customers: 客户数组；ownersMap: {boss,lead,assist} → 人名
-export function buildMonthTasks(month, customers, ownersMap) {
+// opts.disabledKeys: 停用的模板 key（内置或自定义）
+// opts.customTemplates: 自定义模板 [{key,name,week,due,role,tiers,type}]，role∈boss|lead|assist，tiers=['ALL']|['S1','S2','S3']，type∈client|team
+export function buildMonthTasks(month, customers, ownersMap, opts = {}) {
+  const disabled = new Set(opts.disabledKeys || []);
+  const custom = opts.customTemplates || [];
   const docs = [];
   const mk = (o) => ({ ...o, month, state: 'todo', doneAt: null, note: '' });
 
@@ -79,6 +83,7 @@ export function buildMonthTasks(month, customers, ownersMap) {
     const tier = c.tier || tierOf(c.revenue);
     for (const tpl of TASK_TEMPLATES[tier]) {
       if (tpl.key === 's1_annual' && !month.endsWith('-12')) continue;
+      if (disabled.has(tpl.key)) continue;
       if (tpl.type === 'batch') continue; // 批量任务按组生成，不逐户
       docs.push(mk({
         _id: `t_${month}_${c._id}_${tpl.key}`,
@@ -89,11 +94,39 @@ export function buildMonthTasks(month, customers, ownersMap) {
     }
   }
 
+  // 自定义模板：逐户型按档位展开，团队型单条
+  for (const tpl of custom) {
+    if (disabled.has(tpl.key)) continue;
+    const owner = ownersMap[tpl.role] || tpl.role;
+    if (tpl.type === 'team') {
+      docs.push(mk({
+        _id: `t_${month}_team_${tpl.key}`, type: 'team', tier: 'ALL',
+        clientName: `【团队】${tpl.name.includes('团队') ? '' : ''}${tpl.name}`,
+        key: tpl.key, name: tpl.name, week: tpl.week, due: tpl.due,
+        ownerRole: tpl.role, owner,
+      }));
+    } else {
+      for (const c of customers) {
+        if (c.archived) continue;
+        const tier = c.tier || tierOf(c.revenue);
+        if (tpl.tiers.includes('ALL') || tpl.tiers.includes(tier)) {
+          docs.push(mk({
+            _id: `t_${month}_${c._id}_${tpl.key}`,
+            type: 'client', clientId: c._id, clientName: c.name, tier,
+            key: tpl.key, name: tpl.name, week: tpl.week, due: tpl.due,
+            ownerRole: tpl.role, owner,
+          }));
+        }
+      }
+    }
+  }
+
   // 批量任务（每档一组一条，携带客户清单）
   for (const tier of ['S1']) {
     const list = customers.filter(c => !c.archived && (c.tier || tierOf(c.revenue)) === tier);
     for (const tpl of TASK_TEMPLATES[tier]) {
       if (tpl.key === 's1_annual' && !month.endsWith('-12')) continue;
+      if (disabled.has(tpl.key)) continue;
       if (list.length === 0) continue;
       docs.push(mk({
         _id: `t_${month}_${tier}_${tpl.key}`,
@@ -107,6 +140,7 @@ export function buildMonthTasks(month, customers, ownersMap) {
 
   // 团队级
   for (const tpl of TEAM_TASKS.S3) {
+    if (disabled.has(tpl.key)) continue;
     docs.push(mk({
       _id: `t_${month}_team_${tpl.key}`,
       type: 'team', tier: 'S3', clientName: '【S3 团队】7家实体户',
