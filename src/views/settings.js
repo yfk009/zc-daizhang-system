@@ -2,6 +2,7 @@
 import { esc, toast } from '../ui.js';
 import { state, loadAll, seedCustomers } from '../app-state.js';
 import { store, exportAllLocal, importAllLocal, wipeAll, getUser } from '../db.js';
+import { parseClientTemplate, planClientImport } from '../client-template.js';
 
 export function render(root, ctx) {
   const s = state.settings;
@@ -35,6 +36,15 @@ export function render(root, ctx) {
       <div class="panel">
         <h3>🔐 执行开关</h3>
         <div class="switch"><input type="checkbox" id="swEv" ${s.evidenceRequired ? 'checked' : ''}><span>完成任务必须选择凭证（推荐开启）</span></div>
+      </div>
+      <div class="panel">
+        <h3>📋 客户名单模板导入</h3>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <label class="btn" style="cursor:pointer">📄 选择模板 Excel<input type="file" id="tplImp" accept=".xlsx,.xls" style="display:none"></label>
+          <span class="st" id="tplState">客户库：${state.customers.length} 家</span>
+        </div>
+        <div id="tplPreview" style="display:none;margin-top:12px"></div>
+        <p class="muted" style="margin-top:10px">配合「ZC-客户信息导入模板.xlsx」使用：按 纳税人识别号→公司名称 匹配，已有客户更新、新客户自动建档；示例/合计/空行自动跳过；月记账费=年÷12；分级按本期营业额快照每月判一次（手动锁档的客户不重划）；负责人按分级自动指派。</p>
       </div>
       <div class="panel">
         <h3>💾 数据管理</h3>
@@ -86,6 +96,67 @@ export function render(root, ctx) {
   root.querySelector('#swEv').onchange = async e => { s.evidenceRequired = e.target.checked; await store.upsert('settings', s); toast('已保存'); };
   root.querySelector('#btnExp').onclick = exportBackup;
   root.querySelector('#btnImp').onchange = importBackup;
+  // 客户名单模板导入：选文件→解析预览→确认落库
+  let tplPlan = null;
+  root.querySelector('#tplImp').onchange = async e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const prev = root.querySelector('#tplPreview');
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+      const sheetName = wb.SheetNames.includes('客户信息') ? '客户信息' : wb.SheetNames[0];
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: '' });
+      const parsed = parseClientTemplate(rows);
+      if (!parsed.ok) { toast('⚠️ ' + parsed.error); return; }
+      if (!parsed.items.length) { toast('模板中没有可导入的客户行'); return; }
+      tplPlan = planClientImport(parsed.items, state.customers);
+      const om = s.ownersMap;
+      for (const d of [...tplPlan.creates, ...tplPlan.updates]) d.owner = om[d.ownerRole] || d.owner || '';
+      drawTplPreview(root, parsed, tplPlan, f.name);
+    } catch (err) { console.error(err); toast('文件解析失败：' + err.message); }
+  };
+  function drawTplPreview(rootEl, parsed, plan, fileName) {
+    const prev = rootEl.querySelector('#tplPreview');
+    const st = rootEl.querySelector('#tplState');
+    const skipTxt = parsed.skipped.length ? ` · 跳过 ${parsed.skipped.length} 行` : '';
+    const cutTxt = parsed.cutoff ? `本期营业额截止 ${parsed.cutoff} ｜ ` : '';
+    st.textContent = `已解析：${fileName}`;
+    st.className = 'st todo';
+    const head = `<p style="font-size:13px"><b>${cutTxt}共 ${parsed.items.length} 行</b> → <span style="color:#15803d">新增 ${plan.creates.length}</span> · <span style="color:#1d4ed8">更新 ${plan.updates.length}</span>${skipTxt}</p>`;
+    const maxShow = 15;
+    const shown = plan.rows.slice(0, maxShow);
+    const tbl = `<table style="margin-top:8px"><thead><tr><th>行</th><th>公司名称</th><th>匹配</th><th>年记账费</th><th>月费</th><th>营业额</th><th>分级</th><th>有效期止</th></tr></thead><tbody>${
+      shown.map(r => `<tr>
+        <td>${r.row}</td><td>${esc(r.name)}</td>
+        <td>${r.action === 'create' ? '<span class="tag S1" style="background:#15803d;color:#fff">新增</span>' : '更新·' + r.via}</td>
+        <td style="text-align:right">${r.annualFee ?? ''}</td>
+        <td style="text-align:right">${r.monthFee ?? ''}</td>
+        <td style="text-align:right">${r.revenue ?? ''}</td>
+        <td><span class="tag ${r.tier}">${r.tier}</span></td>
+        <td>${r.end || ''}</td></tr>`).join('')
+    }${plan.rows.length > maxShow ? `<tr><td colspan="8" class="muted">…其余 ${plan.rows.length - maxShow} 行不再显示，导入时全部生效</td></tr>` : ''}</tbody></table>`;
+    const warn = (plan.warnings.length || parsed.skipped.length)
+      ? `<p class="muted" style="margin-top:6px">${[...plan.warnings, ...parsed.skipped.map(k => `第 ${k.row} 行（${k.name || '空'}）${k.reason}`)].map(x => '· ' + esc(x)).join('<br>')}</p>` : '';
+    prev.innerHTML = `${head}${tbl}${warn}
+      <div style="margin-top:10px;display:flex;gap:10px;align-items:center">
+        <button class="btn" id="tplConfirm">✓ 确认导入（新增 ${plan.creates.length} + 更新 ${plan.updates.length}）</button>
+        <span class="muted" style="font-size:12px">导入后分级/负责人/月费立即生效，当月任务下次生成时按新名单出</span>
+      </div>`;
+    prev.style.display = '';
+    prev.querySelector('#tplConfirm').onclick = async () => {
+      const btn = prev.querySelector('#tplConfirm');
+      btn.disabled = true;
+      try {
+        await store.upsertMany('customers', [...plan.creates, ...plan.updates]);
+        await loadAll();
+        tplPlan = null;
+        prev.style.display = 'none';
+        toast(`✓ 导入完成：新增 ${plan.creates.length} 户、更新 ${plan.updates.length} 户，客户库共 ${state.customers.length} 家`);
+        window.__rerender?.();
+      } catch (err) { btn.disabled = false; toast('导入失败：' + err.message); }
+    };
+  }
   const seedBtn = root.querySelector('#btnSeed');
   if (seedBtn) seedBtn.onclick = async () => {
     const r = await seedCustomers();
