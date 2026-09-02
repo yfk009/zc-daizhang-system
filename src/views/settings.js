@@ -57,9 +57,11 @@ export function render(root, ctx) {
         <input id="aiKey" type="password" placeholder="sk-..." style="width:100%">
         <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <button class="btn" id="aiSave">保存配置</button>
+          <button class="btn ghost" id="aiTest">🔌 测试连接</button>
           <button class="btn ghost" id="aiClear">清除</button>
           <span class="st" id="aiState"></span>
         </div>
+        <p id="aiTestOut" style="margin:8px 0 0;font-size:13px;min-height:18px"></p>
         <p class="muted" id="aiHint" style="margin-top:6px"></p>
         <p class="muted" style="margin-top:8px">仅存本机浏览器（不会进仓库/云端/备份 JSON），用于「数据导入」页的 AI 解析任意表格。无 Key 时智能识别（离线）依然可用。</p>
       </div>
@@ -120,6 +122,55 @@ export function render(root, ctx) {
     presetSel.value = match ? match.id : 'custom';
     hintEl.textContent = (match && match.hint) || '';
   });
+  root.querySelector('#aiTest').onclick = async () => {
+    const out = root.querySelector('#aiTestOut');
+    const btn = root.querySelector('#aiTest');
+    const base = root.querySelector('#aiBase').value.trim().replace(/\/$/, '');
+    const model = root.querySelector('#aiModel').value.trim();
+    const key = root.querySelector('#aiKey').value.trim();
+    if (!base || !model || !key) {
+      out.style.color = '#b45309';
+      out.textContent = '⚠️ 请先填齐接口地址、模型和 API Key 再测试';
+      return;
+    }
+    const bad = validateAiUrl(base);
+    if (bad) { out.style.color = '#b91c1c'; out.textContent = '⚠️ ' + bad; return; }
+    btn.disabled = true;
+    out.style.color = '';
+    out.textContent = '⏳ 正在连接，最多等 15 秒…';
+    const t0 = Date.now();
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      const res = await fetch(base + '/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+        body: JSON.stringify({ model, messages: [{ role: 'user', content: '回复OK' }], max_tokens: 8, temperature: 0, stream: false }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      const secs = ((Date.now() - t0) / 1000).toFixed(1);
+      let data = null;
+      try { data = await res.json(); } catch { /* 非 JSON 响应按错误处理 */ }
+      if (res.ok && data && Array.isArray(data.choices) && data.choices[0]) {
+        const reply = ((data.choices[0].message || {}).content || '').trim().slice(0, 20);
+        out.style.color = '#15803d';
+        out.textContent = `✓ 连接成功（${secs}s · ${model}${reply ? ' · 回复：' + reply : ''}）。记得点「保存配置」`;
+      } else {
+        const msg = (data && data.error && (data.error.message || data.error.msg)) || `HTTP ${res.status}`;
+        out.style.color = '#b91c1c';
+        out.textContent = `✗ 连接失败：${msg}`;
+      }
+    } catch (err) {
+      const secs = ((Date.now() - t0) / 1000).toFixed(1);
+      out.style.color = '#b91c1c';
+      out.textContent = err.name === 'AbortError'
+        ? '✗ 连接超时（15 秒无响应），检查地址或稍后再试'
+        : `✗ 无法连接（${secs}s）：可能是跨域限制、网络不通或地址有误`;
+    } finally {
+      btn.disabled = false;
+    }
+  };
   root.querySelector('#aiSave').onclick = () => {
     const conf = {
       base: root.querySelector('#aiBase').value.trim() || 'https://open.bigmodel.cn/api/paas/v4',
@@ -171,6 +222,22 @@ export function render(root, ctx) {
 }
 
 const ratioRow = (k, label, v) => `<div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0"><span style="font-size:13px">${label}</span><input data-ratio="${k}" type="number" value="${v}" style="width:110px"></div>`;
+
+// 测试请求的 URL 安全校验：仅公网 http/https，拒绝本机/内网/保留地址
+function validateAiUrl(url) {
+  let u;
+  try { u = new URL(url); } catch { return '接口地址格式不正确'; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return '仅支持 http/https 地址';
+  const bare = (u.hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (!bare) return '接口地址缺少主机名';
+  if (bare === 'localhost' || bare.endsWith('.localhost') || bare.endsWith('.local') || bare.endsWith('.internal')) return '不允许本机/内网地址';
+  if (/^127\./.test(bare) || /^10\./.test(bare) || /^192\.168\./.test(bare) || /^169\.254\./.test(bare) || /^0\./.test(bare)) return '不允许本机/内网地址';
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(bare)) return '不允许内网地址';
+  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(bare)) return '不允许保留地址';
+  if (/^(192\.0\.2\.|198\.51\.100\.|203\.0\.113\.)/.test(bare)) return '不允许保留地址';
+  if (bare === '::1' || bare === '::' || /^(f[cd]|fe80)/.test(bare)) return '不允许本机/内网地址';
+  return '';
+}
 
 // 国内主流大厂 OpenAI 兼容接口预设（顺序即下拉顺序，第一个为默认）
 const AI_PROVIDERS = [
