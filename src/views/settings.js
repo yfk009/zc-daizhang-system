@@ -47,6 +47,8 @@ export function render(root, ctx) {
       </div>
       <div class="panel">
         <h3>🤖 AI 接口（智能导入解析用，可选）</h3>
+        <label>厂商预设</label>
+        <select id="aiPreset" style="width:100%"></select>
         <label>接口地址（OpenAI 兼容 /chat/completions）</label>
         <input id="aiBase" placeholder="https://open.bigmodel.cn/api/paas/v4" style="width:100%">
         <label>模型</label>
@@ -58,6 +60,7 @@ export function render(root, ctx) {
           <button class="btn ghost" id="aiClear">清除</button>
           <span class="st" id="aiState"></span>
         </div>
+        <p class="muted" id="aiHint" style="margin-top:6px"></p>
         <p class="muted" style="margin-top:8px">仅存本机浏览器（不会进仓库/云端/备份 JSON），用于「数据导入」页的 AI 解析任意表格。无 Key 时智能识别（离线）依然可用。</p>
       </div>
       <div class="panel">
@@ -88,15 +91,35 @@ export function render(root, ctx) {
     toast(r.skipped ? '已存在客户库' : `✓ 已初始化 ${r.count} 家`); window.__rerender?.();
   };
   // AI 接口配置（localStorage zx_ai_conf，独立于业务数据备份）
+  const presetSel = root.querySelector('#aiPreset');
+  const hintEl = root.querySelector('#aiHint');
+  presetSel.innerHTML = AI_PROVIDERS.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
   try {
     const ai = JSON.parse(localStorage.getItem('zx_ai_conf') || 'null') || {};
     root.querySelector('#aiBase').value = ai.base || '';
     root.querySelector('#aiModel').value = ai.model || '';
     root.querySelector('#aiKey').value = ai.apiKey || '';
+    const saved = AI_PROVIDERS.find(p => p.base && p.base === (ai.base || '').replace(/\/$/, ''));
+    presetSel.value = saved ? saved.id : (ai.base ? 'custom' : 'zhipu');
+    hintEl.textContent = (saved || AI_PROVIDERS[0]).hint || '';
     const st = root.querySelector('#aiState');
     st.textContent = ai.apiKey ? '✓ 已配置' : '未配置（离线智能识别可用）';
     st.className = 'st ' + (ai.apiKey ? 'done' : 'todo');
-  } catch { /* ignore */ }
+  } catch { presetSel.value = 'zhipu'; hintEl.textContent = AI_PROVIDERS[0].hint; }
+  presetSel.onchange = () => {
+    const p = AI_PROVIDERS.find(x => x.id === presetSel.value);
+    if (p && p.id !== 'custom') {
+      root.querySelector('#aiBase').value = p.base;
+      root.querySelector('#aiModel').value = p.model;
+    }
+    hintEl.textContent = (p && p.hint) || '';
+  };
+  ['#aiBase', '#aiModel'].forEach(id => root.querySelector(id).oninput = () => {
+    const b = root.querySelector('#aiBase').value.trim().replace(/\/$/, '');
+    const match = AI_PROVIDERS.find(p => p.base && p.base === b);
+    presetSel.value = match ? match.id : 'custom';
+    hintEl.textContent = (match && match.hint) || '';
+  });
   root.querySelector('#aiSave').onclick = () => {
     const conf = {
       base: root.querySelector('#aiBase').value.trim() || 'https://open.bigmodel.cn/api/paas/v4',
@@ -111,7 +134,9 @@ export function render(root, ctx) {
   };
   root.querySelector('#aiClear').onclick = () => {
     localStorage.removeItem('zx_ai_conf');
+    presetSel.value = 'zhipu';
     root.querySelector('#aiBase').value = ''; root.querySelector('#aiModel').value = ''; root.querySelector('#aiKey').value = '';
+    hintEl.textContent = AI_PROVIDERS[0].hint;
     const st = root.querySelector('#aiState');
     st.textContent = '未配置（离线智能识别可用）'; st.className = 'st todo';
     toast('AI 配置已清除');
@@ -146,6 +171,18 @@ export function render(root, ctx) {
 }
 
 const ratioRow = (k, label, v) => `<div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0"><span style="font-size:13px">${label}</span><input data-ratio="${k}" type="number" value="${v}" style="width:110px"></div>`;
+
+// 国内主流大厂 OpenAI 兼容接口预设（顺序即下拉顺序，第一个为默认）
+const AI_PROVIDERS = [
+  { id: 'zhipu', name: '智谱 GLM（免费模型，默认）', base: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash', hint: 'Key 获取：open.bigmodel.cn → 控制台 → API Keys；glm-4-flash 免费，够用' },
+  { id: 'deepseek', name: 'DeepSeek 深度求索', base: 'https://api.deepseek.com/v1', model: 'deepseek-chat', hint: 'Key 获取：platform.deepseek.com → API Keys；按量计费，便宜' },
+  { id: 'qwen', name: '阿里通义千问（百炼）', base: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo', hint: 'Key 获取：bailian.console.aliyun.com → API-KEY 管理' },
+  { id: 'kimi', name: '月之暗面 Kimi', base: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k', hint: 'Key 获取：platform.moonshot.cn → API Key 管理' },
+  { id: 'doubao', name: '字节豆包（火山方舟）', base: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-seed-1.6-flash-250615', hint: 'Key 获取：console.volcengine.com/ark → API Key 管理；模型也可填 ep- 开头的接入点' },
+  { id: 'hunyuan', name: '腾讯混元', base: 'https://api.hunyuan.cloud.tencent.com/v1', model: 'hunyuan-turbos-latest', hint: 'Key 获取：console.cloud.tencent.com → 混元大模型 → API Key' },
+  { id: 'qianfan', name: '百度文心（千帆）', base: 'https://qianfan.baidubce.com/v2', model: 'ernie-3.5-8k-latest', hint: 'Key 获取：console.bce.baidu.com/qianfan → 安全认证 → API Key' },
+  { id: 'custom', name: '自定义（手动填地址和模型）', base: '', model: '', hint: '任何 OpenAI 兼容接口均可：填地址、模型名、Key 三项' },
+];
 
 function drawStaff(root, ctx) {
   const s = state.settings;
