@@ -171,3 +171,27 @@ export function parsePastedText(text) {
     line.replace(/\r/g, '').split(/\t/).map(s => s.trim())
   ).filter(r => r.some(c => c !== ''));
 }
+
+// 表格行聚合：空名承接上行（合并单元格场景），同一客户多行数值求和（明细行汇总）
+// 输入行需已剔除合计行；返回按名称聚合后的行数组
+export function aggregateRows(rows) {
+  const out = [];
+  const idx = new Map();
+  let lastName = '';
+  for (const r of rows) {
+    let name = String(r.name || '').trim();
+    if (!name) name = lastName; else lastName = name;
+    if (!name) continue;
+    if (!idx.has(name)) {
+      const o = { ...r, name };
+      idx.set(name, o);
+      out.push(o);
+    } else {
+      const o = idx.get(name);
+      for (const k of ['revenue', 'cost', 'taxTotal', 'fee', 'annualRev']) {
+        if (r[k] != null) o[k] = (o[k] || 0) + r[k];
+      }
+    }
+  }
+  return out;
+}

@@ -1,43 +1,40 @@
-// 数据导入（智能版）：任意模板自动分析拆解
-// 输入：Excel 文件 / 粘贴表格 ｜ 识别：表头行定位、列角色智能判定、客户库匹配、单户报表模式
-// 可选：AI 大模型解析（设置页配置接口后启用）
+// 数据导入（智能版·全表覆盖）：工作簿里所有表格一次处理
+// 输入：Excel 文件（多 sheet）/ 反复粘贴多张表 ｜ 识别：每张表独立判定列式/单户模式
+// 重新识别 / AI 解析 / 一键全流程 均覆盖全部表格；合并单元格自动承接、同客户多行自动汇总
 import { esc, toast } from '../ui.js';
 import { state, loadAll, prevDataMonth } from '../app-state.js';
 import { store, newId } from '../db.js';
 import { buildMonthTasks, tierOf } from '../templates.js';
 import {
   detectHeaderRow, detectMode, guessColumns, matchClient,
-  parseNumber, parsePastedText, extractClientFinancials,
+  parseNumber, parsePastedText, extractClientFinancials, aggregateRows,
 } from '../smart-import.js';
 
-let wbData = null;        // { sheetNames, sheets }
+let wbData = null;        // { sheetNames: [], sheets: {} }
 let curSheet = '';
-let mapping = { name: -1, revenue: -1, cost: -1, tax: -1, fee: -1, annualRev: -1 };
 let dataMonth = '';
 let pasteOn = false;
-let mode = 'A';           // A 列式明细 / B 单户报表
-let singleClient = null;  // B 模式客户
-let singleVals = { revenue: null, cost: null, tax: null };
-let headers = [], dataRows = [], headerRowIdx = 0;
-let matched = [];         // [{name, clientId, revenue, cost, taxTotal, fee, annualRev}]
-let lastPipeline = null;  // 一键处理结果摘要
+let pasteCount = 0;
+let sheetAn = {};         // sheetName → { mode, headerRowIdx, headers, dataRows, mapping, matched, singleClient, singleVals }
+let lastPipeline = null;
 
 export function render(root, ctx) {
   if (!dataMonth) dataMonth = prevDataMonth();
   root.innerHTML = `
   <div class="panel">
-    <h3>📥 智能数据导入（月度经营数据）</h3>
-    <p class="muted" style="margin-bottom:12px">不限模板：给什么表就分析什么表。自动定位表头、识别客户列与收入/成本/税金列并匹配客户库；单户报表（表名/标题含客户名）自动切换行式取数；也可在设置页配置 AI 接口后用大模型解析任意表格。导入结果供月度简报、偏差报告、税金确认取数。</p>
+    <h3>📥 智能数据导入（月度经营数据 · 全部表格）</h3>
+    <p class="muted" style="margin-bottom:12px">不限模板、不限表格数量：选一个 Excel 文件（含多少张表就处理多少张），或反复粘贴多张表。每张表自动判定"列式明细（多客户）/单户报表"，重新识别、AI 解析、一键全流程均覆盖<b>全部表格</b>。合并单元格（客户名只写第一行）自动承接，同一客户多行自动汇总。</p>
     <div class="filters">
       <label style="margin:0 8px 0 0">账务数据月：</label>
       <input type="month" id="impMonth" value="${dataMonth}">
       <input type="file" id="impFile" accept=".xlsx,.xls,.csv" style="flex:1;min-width:180px">
       <button class="btn ghost" id="pasteBtn">📋 粘贴表格</button>
+      ${wbData ? '<button class="btn ghost" id="clearBtn">🗑 清空已识别表格</button>' : ''}
     </div>
     <div id="pasteWrap" style="display:none;margin-top:8px">
-      <textarea id="pasteArea" placeholder="从 Excel/WPS 直接复制区域粘贴（Ctrl+V），第一行最好是表头；单户利润表直接整表粘贴即可" style="width:100%;height:110px;border:1px solid #cbd5e1;border-radius:8px;padding:8px;font-size:12px;font-family:monospace"></textarea>
-      <button class="btn" id="pasteParse" style="margin-top:6px">🔍 解析粘贴内容</button>
-      <span class="muted" style="margin-left:8px">适合快速录几行，或软件不支持导出时</span>
+      <textarea id="pasteArea" placeholder="从 Excel/WPS 直接复制区域粘贴（Ctrl+V）；可多次粘贴，每张表独立识别" style="width:100%;height:110px;border:1px solid #cbd5e1;border-radius:8px;padding:8px;font-size:12px;font-family:monospace"></textarea>
+      <button class="btn" id="pasteParse" style="margin-top:6px">🔍 识别这张表</button>
+      <span class="muted" style="margin-left:8px">每粘贴一张点一次，多张表累加</span>
     </div>
   </div>
   <div id="impBody"></div>`;
@@ -49,6 +46,11 @@ export function render(root, ctx) {
     root.querySelector('#pasteWrap').style.display = pasteOn ? 'block' : 'none';
   };
   root.querySelector('#pasteParse').onclick = () => onPaste(root, ctx);
+  const clearBtn = root.querySelector('#clearBtn');
+  if (clearBtn) clearBtn.onclick = () => {
+    wbData = null; sheetAn = {}; curSheet = ''; pasteCount = 0; lastPipeline = null;
+    render(root, ctx);
+  };
   drawBody(root, ctx);
 }
 
@@ -67,9 +69,10 @@ async function onFile(e, root, ctx) {
       sheetNames: wb.SheetNames,
       sheets: Object.fromEntries(wb.SheetNames.map(n => [n, XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: '' })])),
     };
-    curSheet = wb.SheetNames[0];
-    toast(`已读取 ${f.name}（${wb.SheetNames.length} 个工作表）`);
-    analyze(root, ctx);
+    pasteCount = 0;
+    lastPipeline = null;
+    toast(`已读取 ${f.name}：${wb.SheetNames.length} 张表格，开始全表识别`);
+    analyzeAll(root, ctx);
   } catch (err) { console.error(err); toast('文件解析失败：' + err.message); }
 }
 
@@ -78,42 +81,43 @@ function onPaste(root, ctx) {
   if (!text.trim()) { toast('请先粘贴表格内容'); return; }
   const rows = parsePastedText(text);
   if (!rows.length) { toast('未识别到内容'); return; }
-  wbData = { sheetNames: ['粘贴的表格'], sheets: { '粘贴的表格': rows } };
-  curSheet = '粘贴的表格';
-  analyze(root, ctx);
+  if (!wbData) wbData = { sheetNames: [], sheets: {} };
+  pasteCount += 1;
+  const name = `粘贴表格${pasteCount}`;
+  wbData.sheets[name] = rows;
+  wbData.sheetNames.push(name);
+  lastPipeline = null;
+  root.querySelector('#pasteArea').value = '';
+  toast(`已加入「${name}」（${rows.length} 行）`);
+  analyzeAll(root, ctx);
 }
 
-// 核心：分析当前表 → 定模式、猜列、逐行匹配
-function analyze(root, ctx) {
-  const rows = wbData.sheets[curSheet] || [];
-  if (!rows.length) { drawBody(root, ctx); return; }
-  lastPipeline = null; // 新解析清空上次的处理摘要
-  headerRowIdx = detectHeaderRow(rows);
-  headers = rows[headerRowIdx] || [];
-  dataRows = rows.slice(headerRowIdx + 1).filter(r => r.some(c => String(c ?? '').trim() !== ''));
-  const det = detectMode({ headers, dataRows, customers: state.customers, sheetName: curSheet, rows });
-  mode = det.mode;
-  singleClient = det.client || null;
-  if (mode === 'A') {
-    mapping = det.guess;
-    doMatch();
+/* ---------- 全表分析 ---------- */
+function analyzeSheet(name) {
+  const rows = wbData.sheets[name] || [];
+  const headerRowIdx = detectHeaderRow(rows);
+  const headers = rows[headerRowIdx] || [];
+  const dataRows = rows.slice(headerRowIdx + 1).filter(r => r.some(c => String(c ?? '').trim() !== ''));
+  const det = detectMode({ headers, dataRows, customers: state.customers, sheetName: name, rows });
+  const an = { mode: det.mode, headerRowIdx, headers, dataRows, mapping: null, matched: [], singleClient: det.client || null, singleVals: null };
+  if (det.mode === 'A') {
+    an.mapping = det.guess;
+    an.matched = buildMatched(an);
   } else {
-    singleVals = extractClientFinancials(rows);
+    an.singleVals = extractClientFinancials(rows);
   }
-  drawBody(root, ctx);
+  return an;
 }
 
-function doMatch() {
-  matched = [];
-  // 年度口径列与月度收入列若是同一列，视为名单表：月度财务收入不落库（防年值当月值）
+function buildMatched(an) {
+  const mapping = an.mapping;
   const revIsAnnual = mapping.revenue >= 0 && mapping.revenue === mapping.annualRev;
-  for (const r of dataRows) {
+  const raw = [];
+  for (const r of an.dataRows) {
     const name = String(r[mapping.name] ?? '').trim();
-    if (!name || name === 'undefined' || name === '合计' || /合\s*计|总\s*计/.test(name)) continue;
-    const client = matchClient(name, state.customers);
-    matched.push({
+    if (name && (name === 'undefined' || /合\s*计|总\s*计/.test(name))) continue;
+    raw.push({
       name,
-      clientId: client ? client._id : null,
       revenue: !revIsAnnual && mapping.revenue >= 0 ? parseNumber(r[mapping.revenue]) : null,
       cost: mapping.cost >= 0 ? parseNumber(r[mapping.cost]) : null,
       taxTotal: mapping.tax >= 0 ? parseNumber(r[mapping.tax]) : null,
@@ -121,52 +125,70 @@ function doMatch() {
       annualRev: mapping.annualRev >= 0 ? parseNumber(r[mapping.annualRev]) : null,
     });
   }
+  // 合并单元格承接 + 同名聚合，然后匹配客户库
+  return aggregateRows(raw).map(m => ({ ...m, clientId: matchClient(m.name, state.customers)?._id || null }));
+}
+
+function analyzeAll(root, ctx) {
+  curSheet = wbData.sheetNames[0] || '';
+  for (const name of wbData.sheetNames) sheetAn[name] = analyzeSheet(name);
+  drawBody(root, ctx);
 }
 
 /* ---------- 渲染 ---------- */
+function sheetTabsHtml() {
+  if (!wbData || wbData.sheetNames.length <= 1) return '';
+  return `<div class="filters" style="max-height:96px;overflow-y:auto">${wbData.sheetNames.map(n => {
+    const an = sheetAn[n] || {};
+    const badge = an.mode === 'B' ? `单户${an.singleClient ? '·' + esc(an.singleClient.name.slice(0, 6)) : ''}` : `列式·${an.matched.length}行`;
+    return `<button class="btn sm ${n === curSheet ? '' : 'ghost'}" data-sheet="${esc(n)}" title="${esc(n)}">${esc(n.length > 12 ? n.slice(0, 12) + '…' : n)}<span class="muted"> ${badge}</span></button>`;
+  }).join('')}</div>`;
+}
+
 function drawBody(root, ctx) {
   const body = root.querySelector('#impBody');
   if (!wbData) {
     body.innerHTML = '<div class="muted" style="text-align:center;padding:24px">选择文件或粘贴表格后，系统自动分析并展示识别结果</div>';
     return;
   }
-  if (mode === 'B') { drawModeB(body, root, ctx); return; }
-  drawModeA(body, root, ctx);
+  const an = sheetAn[curSheet];
+  if (!an) { body.innerHTML = '<div class="muted">无表格</div>'; return; }
+  if (an.mode === 'B') { drawModeB(body, root, ctx, an); return; }
+  drawModeA(body, root, ctx, an);
 }
 
-function sheetTabsHtml() {
-  return wbData.sheetNames.length > 1
-    ? `<div class="filters">${wbData.sheetNames.map(n => `<button class="btn sm ${n === curSheet ? '' : 'ghost'}" data-sheet="${esc(n)}">${esc(n)}</button>`).join('')}</div>`
-    : '';
-}
-
-function drawModeA(body, root, ctx) {
+function drawModeA(body, root, ctx, an) {
   const conf = aiConf();
-  const cols = headers.map((h, i) => ({ i, label: `${esc(String(h).slice(0, 14)) || '第' + (i + 1) + '列'}` }));
+  const cols = an.headers.map((h, i) => ({ i, label: `${esc(String(h).slice(0, 14)) || '第' + (i + 1) + '列'}` }));
+  const mapping = an.mapping;
   const opt = (sel, allowName) => '<option value="-1">（不导入）</option>'
     + cols.map(c => `<option value="${c.i}" ${sel === c.i ? 'selected' : ''}>${allowName && mapping.name === c.i ? '👤 ' : ''}${c.label}</option>`).join('');
   const smartTag = v => v >= 0 ? '<span class="st done">🤖 已识别</span>' : '<span class="st todo">未识别·请选</span>';
-  const emptyLibTip = state.customers.length === 0
-    ? '<div class="banner" style="margin:0 0 10px">💡 客户库为空？没关系——点下方「🚀 一键导入并自动处理」，系统会按表格自动建档、分层并串起后续全流程。</div>' : '';
-  const resultBanner = lastPipeline
-    ? `<div class="msgbox" style="margin:0 0 10px">🚀 <b>处理完成</b>：${lastPipeline.text}</div>` : '';
+  const aSheets = wbData.sheetNames.filter(n => sheetAn[n] && sheetAn[n].mode === 'A');
+  const totalRows = aSheets.reduce((a, n) => a + sheetAn[n].matched.length, 0);
+  const bSheets = wbData.sheetNames.filter(n => sheetAn[n] && sheetAn[n].mode === 'B').length;
+  const resultBanner = lastPipeline ? `<div class="msgbox" style="margin:0 0 10px">🚀 <b>处理完成</b>：${lastPipeline.text}</div>` : '';
+  const emptyLibTip = state.customers.length === 0 && totalRows > 0
+    ? '<div class="banner" style="margin:0 0 10px">💡 客户库为空？没关系——点下方「🚀 一键匹配·建档·完成全流程」会按表格自动建档、分层并串起后续全流程。</div>' : '';
   body.innerHTML = `
   ${sheetTabsHtml()}
   <div class="panel">
-    <h3>🔍 智能识别结果 <span class="st done">列式明细表</span> <span class="muted">表头行：第 ${headerRowIdx + 1} 行 ｜ 识别到 ${matched.length} 行数据</span></h3>
+    <h3>🔍 智能识别结果 <span class="st done">列式明细表</span>
+      <span class="muted">当前表「${esc(curSheet)}」：表头第 ${an.headerRowIdx + 1} 行 ｜ ${an.matched.length} 户（同名已汇总）</span></h3>
+    <div class="muted" style="margin-bottom:10px">共识别 <b>${wbData.sheetNames.length}</b> 张表：列式 ${aSheets.length} 张（合计 ${totalRows} 户）｜单户 ${bSheets} 张</div>
     ${resultBanner}${emptyLibTip}
     <div class="filters">
       <label style="margin:0">客户列：</label><select id="mName">${opt(mapping.name, false)}</select>${smartTag(mapping.name)}
       <label style="margin:0 0 0 10px">收入列：</label><select id="mRev">${opt(mapping.revenue)}</select>${smartTag(mapping.revenue)}
       <label style="margin:0 0 0 10px">成本列：</label><select id="mCost">${opt(mapping.cost)}</select>${smartTag(mapping.cost)}
       <label style="margin:0 0 0 10px">税金列：</label><select id="mTax">${opt(mapping.tax)}</select>${smartTag(mapping.tax)}
-      <button class="btn ghost sm" id="reGuess">↻ 重新识别</button>
+      <button class="btn ghost sm" id="reGuess">↻ 重新识别全部表格</button>
       ${conf && conf.apiKey
-        ? '<button class="btn sm" id="aiBtn">🤖 AI 解析此表</button>'
-        : '<span class="muted">💡 在设置页配置 AI 接口后，可让大模型解析任意复杂表格</span>'}
+        ? `<button class="btn sm" id="aiBtn">🤖 AI 解析全部表格（${aSheets.length} 张）</button>`
+        : '<span class="muted">💡 在设置页配置 AI 接口后，可让大模型解析全部表格</span>'}
     </div>
     <table><thead><tr><th>表格中的名称</th><th>匹配到系统客户</th><th>收入</th><th>成本</th><th>税金合计</th></tr></thead>
-    <tbody>${matched.slice(0, 120).map(m => `<tr class="${m.clientId ? 'okrow' : 'newrow'}">
+    <tbody>${an.matched.slice(0, 150).map(m => `<tr class="${m.clientId ? 'okrow' : 'newrow'}">
       <td>${esc(m.name)}</td>
       <td><select class="rowMatch" data-row="${esc(m.name)}">
         ${m.clientId ? '' : '<option value="" selected>🆕 一键时自动新建客户</option>'}
@@ -175,155 +197,86 @@ function drawModeA(body, root, ctx) {
       <td>${m.revenue ?? '—'}</td><td>${m.cost ?? '—'}</td><td>${m.taxTotal ?? '—'}</td>
     </tr>`).join('')}</tbody></table>
     <div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-      <button class="btn" id="autoBtn">🚀 一键匹配·建档·完成全流程</button>
-      <button class="btn ghost" id="reMatch">🔗 一键匹配（重试未匹配行）</button>
-      <button class="btn ghost" id="impSave">仅保存财务数据（精细模式）</button>
+      <button class="btn" id="autoBtn">🚀 一键匹配·建档·完成全流程（全部表格）</button>
+      <button class="btn ghost" id="reMatch">🔗 一键匹配（全部表格）</button>
+      <button class="btn ghost" id="impSave">仅保存当前表财务数据（精细模式）</button>
     </div>
-    <p class="muted" style="margin-top:8px">匹配规则：表格名与客户库自动对齐（支持简称/别名/括号注记）→ 匹配上的直接挂数据；库中没有的行，点🚀时<b>自动新建客户档案并分层</b>，全程无需手动逐行选择。手工下拉仅作精确指定用。</p>
+    <p class="muted" style="margin-top:8px">匹配规则：表格名与客户库自动对齐（简称/别名/括号注记/公共子串）→ 匹配上的直接挂数据；库中没有的行自动新建客户并分层。手工下拉仅作精确指定用。</p>
   </div>`;
 
-  body.querySelectorAll('[data-sheet]').forEach(b => b.onclick = () => { curSheet = b.dataset.sheet; analyze(root, ctx); });
-  body.querySelector('#reMatch').onclick = () => {
-    doMatch(); drawBody(root, ctx);
-    const n = matched.filter(m => m.clientId).length;
-    toast(n ? `🔗 匹配完成：${n}/${matched.length} 行已对上客户库` : '客户库中暂无可匹配客户——点🚀将自动建档');
-  };
+  body.querySelectorAll('[data-sheet]').forEach(b => b.onclick = () => { curSheet = b.dataset.sheet; drawBody(root, ctx); });
   const M = { mName: 'name', mRev: 'revenue', mCost: 'cost', mTax: 'tax' };
   Object.entries(M).forEach(([id, k]) => {
     const el = body.querySelector('#' + id);
-    if (el) el.onchange = e => { mapping[k] = parseInt(e.target.value); doMatch(); drawBody(root, ctx); };
+    if (el) el.onchange = e => {
+      mapping[k] = parseInt(e.target.value);
+      an.matched = buildMatched(an);
+      drawBody(root, ctx);
+    };
   });
-  body.querySelector('#reGuess').onclick = () => { mapping = guessColumns(headers, dataRows, state.customers); doMatch(); drawBody(root, ctx); toast('已重新智能识别'); };
+  body.querySelector('#reGuess').onclick = () => { analyzeAll(root, ctx); toast('已重新识别全部表格'); };
+  body.querySelector('#reMatch').onclick = () => {
+    for (const n of wbData.sheetNames) { const a = sheetAn[n]; if (a && a.mode === 'A') a.matched = buildMatched(a); }
+    drawBody(root, ctx);
+    let hit = 0, total = 0;
+    aSheets.forEach(n => { total += sheetAn[n].matched.length; hit += sheetAn[n].matched.filter(m => m.clientId).length; });
+    toast(hit ? `🔗 匹配完成：${hit}/${total} 行已对上客户库` : '客户库中暂无可匹配客户——点🚀将自动建档');
+  };
   const aiBtn = body.querySelector('#aiBtn');
-  if (aiBtn) aiBtn.onclick = () => aiParse(root, ctx);
+  if (aiBtn) aiBtn.onclick = () => aiParseAll(root, ctx);
   body.querySelectorAll('.rowMatch').forEach(s => s.onchange = e => {
-    const m = matched.find(x => x.name === s.dataset.row);
+    const m = an.matched.find(x => x.name === s.dataset.row);
     if (m) m.clientId = e.target.value || null;
   });
   body.querySelector('#autoBtn').onclick = () => autoProcess(root, ctx);
   body.querySelector('#impSave').onclick = saveImport;
 }
 
-/* ---------- 🚀 一键管线：拆分→建档→分层→财务→税金→任务 ---------- */
-async function autoProcess(root, ctx) {
-  if (!matched.length) { toast('没有可处理的行'); return; }
-  const s = state.settings;
-  const created = [], finDocs = [], taxDocs = [];
-  let matchedCnt = 0;
-
-  for (const m of matched) {
-    let client = m.clientId ? state.customers.find(c => c._id === m.clientId) : null;
-    if (client) { matchedCnt++; }
-    else {
-      // 自动建档：分层依据 年营业额列 → 月收入×12 → 有税金(S2) → 零申报(S1)
-      let annualRev = m.annualRev ?? null;
-      let tier;
-      if (annualRev != null) tier = tierOf(annualRev);
-      else if (m.revenue) { annualRev = Math.round(m.revenue * 12); tier = tierOf(annualRev); }
-      else if (m.taxTotal) tier = 'S2';
-      else { annualRev = 0; tier = 'S1'; }
-      client = {
-        _id: newId('c'), name: m.name, taxNo: '', source: '表格导入',
-        revenue: annualRev || 0, annualFee: m.fee || 0, monthlyFee: 0,
-        tier, tierManual: false, archived: false,
-        ownerRole: tier === 'S1' ? 'assist' : 'lead',
-        owner: tier === 'S1' ? (s.ownersMap.assist || '') : (s.ownersMap.lead || ''),
-        contact: '', phone: '', contractStart: '', contractEnd: '',
-      };
-      await store.upsert('customers', client);
-      created.push(client);
-    }
-    // 财务数据落库（有任一数值才建）
-    if (m.revenue != null || m.cost != null || m.taxTotal != null) {
-      finDocs.push({
-        _id: `f_${dataMonth}_${client._id}`, month: dataMonth, clientId: client._id, clientName: client.name,
-        revenue: m.revenue || 0, cost: m.cost || 0, taxTotal: m.taxTotal || 0,
-        importedAt: new Date().toISOString().slice(0, 10),
-      });
-    }
-    // 税金预填（服务月 taxConfirm，税金>0 才建，状态=金额就绪待发送）
-    if (m.taxTotal != null && m.taxTotal > 0) {
-      taxDocs.push({
-        _id: `x_${state.month}_${client._id}`, month: state.month, clientId: client._id, clientName: client.name,
-        state: 'ready', amounts: { vat: 0, sur: 0, it: 0, cit: 0, total: m.taxTotal },
-      });
-    }
-  }
-
-  if (finDocs.length) await store.upsertMany('financials', finDocs);
-  if (taxDocs.length) await store.upsertMany('taxConfirm', taxDocs);
-
-  // 刷新客户库（后续任务生成要用）
-  state.customers = await store.list('customers');
-
-  // 生成当月任务（幂等：已存在跳过）
-  const existTasks = await store.list('monthTasks', { month: state.month });
-  const existIds = new Set(existTasks.map(t => t._id));
-  const docs = buildMonthTasks(state.month, state.customers, s.ownersMap, {
-    disabledKeys: s.disabledTemplateKeys || [],
-    customTemplates: s.customTemplates || [],
-  }).filter(d => !existIds.has(d._id));
-  if (docs.length) await store.upsertMany('monthTasks', docs);
-  await loadAll();
-
-  const tierDist = { S3: 0, S2: 0, S1: 0 };
-  created.forEach(c => tierDist[c.tier]++);
-  lastPipeline = {
-    text:
-      `建档 <b>${created.length}</b> 家（S3×${tierDist.S3} S2×${tierDist.S2} S1×${tierDist.S1}）｜` +
-      `匹配既有 <b>${matchedCnt}</b> 家 ｜ 财务落库 <b>${finDocs.length}</b> 条（${dataMonth}）｜ ` +
-      `税金预填 <b>${taxDocs.length}</b> 户（${state.month}）｜ 月度任务 <b>${docs.length ? '新生成 ' + docs.length + ' 项' : '已存在'}</b>`,
-  };
-  drawBody(root, ctx);
-  toast('🚀 一键处理完成，各页面已就绪');
-}
-
-function drawModeB(body, root, ctx) {
-  const c = singleClient;
+function drawModeB(body, root, ctx, an) {
+  const c = an.singleClient;
   const conf = aiConf();
   body.innerHTML = `
   ${sheetTabsHtml()}
   <div class="panel">
-    <h3>🔍 智能识别结果 <span class="st done">单户报表（行式取数）</span></h3>
-    ${c ? `<div class="msgbox" style="margin-bottom:12px">识别为 <b>${esc(c.name)}</b>（${c.tier}）的报表：表名/标题命中客户名，已按科目标签行取数。</div>`
-        : `<div class="banner" style="margin:0 0 12px">未能从表名/标题识别客户，请选择：</div>
-           <select id="sbClient" style="margin-bottom:12px"><option value="">— 选择客户 —</option>${state.customers.map(x => `<option value="${x._id}">${esc(x.name)}</option>`).join('')}</select>`}
+    <h3>🔍 智能识别结果 <span class="st done">单户报表（行式取数）</span> <span class="muted">当前表「${esc(curSheet)}」</span></h3>
+    ${c ? `<div class="msgbox" style="margin-bottom:12px">识别为 <b>${esc(c.name)}</b>（${c.tier}）的报表：表名/标题命中客户名，已按科目标签行取数。一键全流程时将自动保存其财务与税金。</div>`
+        : `<div class="banner" style="margin:0 0 12px">未从表名/标题识别到客户——此表将在一键全流程中跳过；可在「客户分层」先建档后重新识别，或点下方按列式处理。</div>`}
     <div class="paper" style="max-width:460px">
-      <div class="row"><span>收入（营业收入等）</span><span><input class="mini-input" id="sb_rev" type="number" value="${singleVals.revenue ?? ''}"> 元</span></div>
-      <div class="row"><span>成本（营业成本等）</span><span><input class="mini-input" id="sb_cost" type="number" value="${singleVals.cost ?? ''}"> 元</span></div>
-      <div class="row"><span>税金（税金及附加/应交税费等）</span><span><input class="mini-input" id="sb_tax" type="number" value="${singleVals.tax ?? ''}"> 元</span></div>
+      <div class="row"><span>收入（营业收入等）</span><span><input class="mini-input" id="sb_rev" type="number" value="${an.singleVals?.revenue ?? ''}"> 元</span></div>
+      <div class="row"><span>成本（营业成本等）</span><span><input class="mini-input" id="sb_cost" type="number" value="${an.singleVals?.cost ?? ''}"> 元</span></div>
+      <div class="row"><span>税金（税金及附加/应交税费等）</span><span><input class="mini-input" id="sb_tax" type="number" value="${an.singleVals?.tax ?? ''}"> 元</span></div>
       <div class="copybar">
-        <button class="btn" id="sbSave">💾 保存到 ${dataMonth}</button>
-        ${conf && conf.apiKey ? '<button class="btn ghost" id="sbAi">🤖 AI 兜底取数</button>' : ''}
+        <button class="btn ghost" id="sbSave">💾 仅保存此表到 ${dataMonth}</button>
         <button class="btn ghost" id="sbModeA">按列式明细处理</button>
+        <button class="btn" id="goAuto">🚀 去一键全流程</button>
       </div>
-      <p class="muted" style="margin-top:10px">行式取数：定位"主营业务收入/营业成本/税金及附加"等科目标签行，取其右侧数值。若取数不准可手改或点 AI 兜底。</p>
     </div>
   </div>`;
-  body.querySelector('#sbSave').onclick = saveSingle;
-  body.querySelector('#sbModeA').onclick = () => { mode = 'A'; mapping = guessColumns(headers, dataRows, state.customers); doMatch(); drawBody(root, ctx); };
-  const sbAi = body.querySelector('#sbAi');
-  if (sbAi) sbAi.onclick = () => aiParse(root, ctx, true);
-}
-
-async function saveSingle() {
-  const cid = singleClient ? singleClient._id : (document.querySelector('#sbClient')?.value || '');
-  const c = state.customers.find(x => x._id === cid);
-  if (!c) { toast('请先选择客户'); return; }
-  const doc = {
-    _id: `f_${dataMonth}_${c._id}`, month: dataMonth, clientId: c._id, clientName: c.name,
-    revenue: parseFloat(document.getElementById('sb_rev').value) || 0,
-    cost: parseFloat(document.getElementById('sb_cost').value) || 0,
-    taxTotal: parseFloat(document.getElementById('sb_tax').value) || 0,
-    importedAt: new Date().toISOString().slice(0, 10),
+  body.querySelector('#sbSave').onclick = async () => {
+    if (!c) { toast('未识别客户，无法保存'); return; }
+    await store.upsert('financials', {
+      _id: `f_${dataMonth}_${c._id}`, month: dataMonth, clientId: c._id, clientName: c.name,
+      revenue: parseFloat(document.getElementById('sb_rev').value) || 0,
+      cost: parseFloat(document.getElementById('sb_cost').value) || 0,
+      taxTotal: parseFloat(document.getElementById('sb_tax').value) || 0,
+      importedAt: new Date().toISOString().slice(0, 10),
+    });
+    await loadAll();
+    toast(`✓ 已保存 ${c.name}（${dataMonth}）`);
   };
-  await store.upsert('financials', doc);
-  await loadAll();
-  toast(`✓ 已保存 ${c.name}（${dataMonth}）：收入 ${doc.revenue.toLocaleString()} / 成本 ${doc.cost.toLocaleString()} / 税金 ${doc.taxTotal.toLocaleString()}`);
+  body.querySelector('#sbModeA').onclick = () => {
+    an.mode = 'A';
+    an.mapping = guessColumns(an.headers, an.dataRows, state.customers);
+    an.matched = buildMatched(an);
+    drawBody(root, ctx);
+  };
+  body.querySelector('#goAuto').onclick = () => autoProcess(root, ctx);
 }
 
 async function saveImport() {
-  const docs = matched.filter(m => m.clientId).map(m => {
+  const an = sheetAn[curSheet];
+  if (!an || an.mode !== 'A') { toast('当前表不是列式明细'); return; }
+  const docs = an.matched.filter(m => m.clientId).map(m => {
     const c = state.customers.find(x => x._id === m.clientId);
     return {
       _id: `f_${dataMonth}_${m.clientId}`, month: dataMonth, clientId: m.clientId, clientName: c ? c.name : m.name,
@@ -337,49 +290,143 @@ async function saveImport() {
   toast(`✓ 已保存 ${docs.length} 条到 ${dataMonth}，交付物页可直接取数`);
 }
 
-/* ---------- AI 大模型解析（可选） ---------- */
-async function aiParse(root, ctx, single = false) {
+/* ---------- 🚀 一键管线：全部表格 → 拆分→建档→分层→财务→税金→任务 ---------- */
+async function autoProcess(root, ctx) {
+  const s = state.settings;
+  const created = [], finDocs = [], taxDocs = [];
+  let matchedCnt = 0, bSaved = 0, skippedB = 0;
+
+  for (const name of wbData.sheetNames) {
+    const an = sheetAn[name];
+    if (!an) continue;
+    if (an.mode === 'B') {
+      // 单户报表：已识别客户才处理
+      const c = an.singleClient;
+      const v = an.singleVals || {};
+      if (!c) { skippedB++; continue; }
+      if (v.revenue != null || v.cost != null || v.tax != null) {
+        finDocs.push({
+          _id: `f_${dataMonth}_${c._id}`, month: dataMonth, clientId: c._id, clientName: c.name,
+          revenue: v.revenue || 0, cost: v.cost || 0, taxTotal: v.tax || 0,
+          importedAt: new Date().toISOString().slice(0, 10),
+        });
+        bSaved++;
+      }
+      if (v.tax != null && v.tax > 0) {
+        taxDocs.push({
+          _id: `x_${state.month}_${c._id}`, month: state.month, clientId: c._id, clientName: c.name,
+          state: 'ready', amounts: { vat: 0, sur: 0, it: 0, cit: 0, total: v.tax },
+        });
+      }
+      continue;
+    }
+    for (const m of an.matched) {
+      let client = m.clientId ? state.customers.find(c => c._id === m.clientId) : null;
+      if (client) { matchedCnt++; }
+      else {
+        let annualRev = m.annualRev ?? null;
+        let tier;
+        if (annualRev != null) tier = tierOf(annualRev);
+        else if (m.revenue) { annualRev = Math.round(m.revenue * 12); tier = tierOf(annualRev); }
+        else if (m.taxTotal) tier = 'S2';
+        else { annualRev = 0; tier = 'S1'; }
+        client = {
+          _id: newId('c'), name: m.name, taxNo: '', source: '表格导入',
+          revenue: annualRev || 0, annualFee: m.fee || 0, monthlyFee: 0,
+          tier, tierManual: false, archived: false,
+          ownerRole: tier === 'S1' ? 'assist' : 'lead',
+          owner: tier === 'S1' ? (s.ownersMap.assist || '') : (s.ownersMap.lead || ''),
+          contact: '', phone: '', contractStart: '', contractEnd: '',
+        };
+        await store.upsert('customers', client);
+        created.push(client);
+      }
+      if (m.revenue != null || m.cost != null || m.taxTotal != null) {
+        finDocs.push({
+          _id: `f_${dataMonth}_${client._id}`, month: dataMonth, clientId: client._id, clientName: client.name,
+          revenue: m.revenue || 0, cost: m.cost || 0, taxTotal: m.taxTotal || 0,
+          importedAt: new Date().toISOString().slice(0, 10),
+        });
+      }
+      if (m.taxTotal != null && m.taxTotal > 0) {
+        taxDocs.push({
+          _id: `x_${state.month}_${client._id}`, month: state.month, clientId: client._id, clientName: client.name,
+          state: 'ready', amounts: { vat: 0, sur: 0, it: 0, cit: 0, total: m.taxTotal },
+        });
+      }
+    }
+  }
+
+  if (finDocs.length) await store.upsertMany('financials', finDocs);
+  if (taxDocs.length) await store.upsertMany('taxConfirm', taxDocs);
+  state.customers = await store.list('customers');
+
+  // 生成当月任务（幂等）
+  const existTasks = await store.list('monthTasks', { month: state.month });
+  const existIds = new Set(existTasks.map(t => t._id));
+  const docs = buildMonthTasks(state.month, state.customers, s.ownersMap, {
+    disabledKeys: s.disabledTemplateKeys || [],
+    customTemplates: s.customTemplates || [],
+  }).filter(d => !existIds.has(d._id));
+  if (docs.length) await store.upsertMany('monthTasks', docs);
+  await loadAll();
+
+  const tierDist = { S3: 0, S2: 0, S1: 0 };
+  created.forEach(c => tierDist[c.tier]++);
+  lastPipeline = {
+    text:
+      `覆盖 ${wbData.sheetNames.length} 张表（单户另存 ${bSaved} 张${skippedB ? '，跳过未识别 ' + skippedB + ' 张' : ''}）｜` +
+      `建档 <b>${created.length}</b> 家（S3×${tierDist.S3} S2×${tierDist.S2} S1×${tierDist.S1}）｜匹配既有 <b>${matchedCnt}</b> 家 ｜ ` +
+      `财务落库 <b>${finDocs.length}</b> 条（${dataMonth}）｜ 税金预填 <b>${taxDocs.length}</b> 户（${state.month}）｜ ` +
+      `月度任务 <b>${docs.length ? '新生成 ' + docs.length + ' 项' : '已存在'}</b>`,
+  };
+  drawBody(root, ctx);
+  toast('🚀 一键处理完成（全部表格），各页面已就绪');
+}
+
+/* ---------- AI 大模型解析（可选 · 全部列式表格） ---------- */
+async function aiParseAll(root, ctx) {
   const conf = aiConf();
   if (!conf || !conf.apiKey) { toast('请先在设置页配置 AI 接口'); return; }
-  toast('🤖 AI 解析中…');
-  const tsv = [headers.map(h => String(h ?? '')).join('\t'), ...dataRows.map(r => r.map(c => String(c ?? '')).join('\t'))].join('\n').slice(0, 9000);
+  const aSheets = wbData.sheetNames.filter(n => sheetAn[n] && sheetAn[n].mode === 'A');
+  if (!aSheets.length) { toast('没有列式表格需要 AI 解析'); return; }
+  toast(`🤖 AI 逐表解析中（${aSheets.length} 张）…`);
   const sys = '你是代账公司的表格解析助手。用户给你一段从Excel复制/解析出的TSV表格数据（第一行为表头）。请提取每个客户的一行数据：客户名(name)、收入(revenue)、成本(cost)、税金合计(tax)，数值为纯数字（原值，不要换算单位）。没有的项用0。跳过合计/空行。只输出一个JSON数组，如 [{"name":"xx公司","revenue":1000,"cost":500,"tax":50}]，不要任何解释文字。';
-  try {
-    const res = await fetch(String(conf.base || 'https://open.bigmodel.cn/api/paas/v4').replace(/\/$/, '') + '/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + conf.apiKey },
-      body: JSON.stringify({
-        model: conf.model || 'glm-4-flash', temperature: 0,
-        messages: [{ role: 'system', content: sys }, { role: 'user', content: tsv }],
-      }),
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const j = await res.json();
-    const text = j?.choices?.[0]?.message?.content || '';
-    const m = text.match(/\[[\s\S]*\]/);
-    if (!m) throw new Error('AI 未返回有效 JSON');
-    const arr = JSON.parse(m[0]);
-    if (single && arr.length >= 1) {
-      singleVals = { revenue: arr[0].revenue ?? null, cost: arr[0].cost ?? null, tax: arr[0].tax ?? null };
-      drawBody(root, ctx);
-      toast(`🤖 AI 提取：收入 ${singleVals.revenue ?? 0} / 成本 ${singleVals.cost ?? 0} / 税金 ${singleVals.tax ?? 0}`);
-      return;
+  let okCnt = 0, failCnt = 0, totalHit = 0;
+  for (const name of aSheets) {
+    const an = sheetAn[name];
+    const tsv = [an.headers.map(h => String(h ?? '')).join('\t'), ...an.dataRows.map(r => r.map(c => String(c ?? '')).join('\t'))].join('\n').slice(0, 9000);
+    try {
+      const res = await fetch(String(conf.base || 'https://open.bigmodel.cn/api/paas/v4').replace(/\/$/, '') + '/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + conf.apiKey },
+        body: JSON.stringify({
+          model: conf.model || 'glm-4-flash', temperature: 0,
+          messages: [{ role: 'system', content: sys }, { role: 'user', content: tsv }],
+        }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const j = await res.json();
+      const text = j?.choices?.[0]?.message?.content || '';
+      const m = text.match(/\[[\s\S]*\]/);
+      if (!m) throw new Error('未返回有效 JSON');
+      const arr = JSON.parse(m[0]);
+      for (const item of arr) {
+        const cl = matchClient(item.name || '', state.customers);
+        if (!cl) continue;
+        let row = an.matched.find(x => x.clientId === cl._id);
+        if (!row) { row = { name: item.name, clientId: cl._id }; an.matched.push(row); }
+        row.revenue = item.revenue ?? row.revenue;
+        row.cost = item.cost ?? row.cost;
+        row.taxTotal = item.tax ?? row.taxTotal;
+        totalHit++;
+      }
+      okCnt++;
+    } catch (e) {
+      console.error('AI sheet fail:', name, e);
+      failCnt++;
     }
-    let hit = 0;
-    for (const item of arr) {
-      const cl = matchClient(item.name || '', state.customers);
-      if (!cl) continue;
-      let row = matched.find(x => x.clientId === cl._id);
-      if (!row) { row = { name: item.name, clientId: cl._id }; matched.push(row); }
-      row.revenue = item.revenue ?? row.revenue;
-      row.cost = item.cost ?? row.cost;
-      row.taxTotal = item.tax ?? row.taxTotal;
-      hit++;
-    }
-    drawBody(root, ctx);
-    toast(`🤖 AI 解析完成：识别 ${arr.length} 行，匹配到客户库 ${hit} 户`);
-  } catch (e) {
-    console.error(e);
-    toast('AI 解析失败：' + e.message + '（若为跨域/网络错误，可在设置页更换接口地址）');
   }
+  drawBody(root, ctx);
+  toast(`🤖 AI 完成：成功 ${okCnt}/${aSheets.length} 张，匹配客户库 ${totalHit} 户${failCnt ? '（' + failCnt + ' 张失败，可用离线识别兜底）' : ''}`);
 }

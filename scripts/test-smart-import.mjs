@@ -1,7 +1,7 @@
 // 智能解析引擎测试：非固定模板的多形态表格 → 验证自动识别
 import {
   detectHeaderRow, guessColumns, matchClient, parseNumber,
-  detectSingleClient, extractClientFinancials, detectMode, parsePastedText, normName,
+  detectSingleClient, extractClientFinancials, detectMode, parsePastedText, normName, aggregateRows,
 } from '../src/smart-import.js';
 
 let pass = 0, fail = 0;
@@ -87,6 +87,19 @@ eq('合计识别', /合\s*计|总\s*计/.test('合计'), true);
 
 // 9) normName 边界
 eq('归一化', normName('昆明测试科技有限公司'), '昆明测试科技');
+
+// 10) 行聚合：合并单元格承接 + 同客户多行汇总 + 合计行剔除（剔除在上游）
+const rawRows = [
+  { name: '甲公司', revenue: 100, cost: 60, taxTotal: 5, fee: null, annualRev: null },
+  { name: '', revenue: 50, cost: 20, taxTotal: 2, fee: null, annualRev: null },   // 承接甲
+  { name: '乙公司', revenue: 200, cost: null, taxTotal: null, fee: 2400, annualRev: 300000 },
+  { name: '', revenue: 30, cost: 10, taxTotal: 1, fee: null, annualRev: null },   // 承接乙
+];
+const agg = aggregateRows(rawRows);
+eq('聚合后行数', agg.length, 2);
+eq('甲公司汇总', agg[0], { name: '甲公司', revenue: 150, cost: 80, taxTotal: 7, fee: null, annualRev: null });
+eq('乙公司汇总', agg[1].revenue, 230);
+eq('乙公司费用保留', agg[1].fee, 2400);
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`);
 process.exit(fail ? 1 : 0);
