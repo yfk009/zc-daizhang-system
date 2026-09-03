@@ -48,8 +48,7 @@ function rowHtml(c, dm) {
   const importTag = (!a && fin && fin.taxTotal) ? '<div class="muted">↳ 金蝶导入合计</div>' : '';
   let stHtml, acts = [];
   if (!tc || (!tc.amounts && !tc.sentAt)) {
-    stHtml = `<span class="st todo">${fin && fin.taxTotal ? '待发送' : '待录入'}</span>`;
-    acts.push(`<button class="btn sm ghost" data-act="edit" data-id="${c._id}">录入金额</button>`);
+    stHtml = `<span class="st todo">${fin && fin.taxTotal ? '待发送' : '待录入'}</span>`; // 按钮由下方通用分支给（未录=录入金额，已录=改金额）
   } else if (tc.state === 'confirmed') {
     stHtml = `<span class="st done">已确认</span>`;
   } else if (tc.sentAt) {
