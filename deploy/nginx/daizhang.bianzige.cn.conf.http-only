@@ -1,0 +1,22 @@
+# daizhang.bianzige.cn — 掌兴代账系统（签发证书前的 HTTP 初始版）
+server {
+    listen 80;
+    listen [::]:80;
+    server_name daizhang.bianzige.cn;
+    index index.html;
+    root /www/wwwroot/daizhang.bianzige.cn/app/dist;
+
+    # ACME HTTP 验证（证书自动续期用，必须保留在 80 端口）
+    location ^~ /.well-known/acme-challenge/ {
+        root /www/wwwroot/daizhang.bianzige.cn/app/dist;
+        default_type "text/plain";
+        try_files $uri =404;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    access_log /www/wwwlogs/daizhang.bianzige.cn.log;
+    error_log /www/wwwlogs/daizhang.bianzige.cn.error.log;
+}

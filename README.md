@@ -3,11 +3,16 @@
 > 一期 · 服务标准化 ｜ 2026-08-20 构建并验证 ｜ 依据 A 任务矩阵 / C 阿米巴参数定稿开发
 > 目标：9 月 1 日前上线，跑通 9 月完整月度循环
 
-## 在线访问（GitHub Pages）
+## 在线访问（GitHub Pages + 自有服务器）
 
-推送 main 分支后 GitHub Actions 自动构建部署（见 .github/workflows/deploy.yml），地址：`https://yfk009.github.io/zc-daizhang-system/`
+| 入口 | 地址 | 说明 |
+|---|---|---|
+| GitHub Pages | `https://yfk009.github.io/zc-daizhang-system/` | 推 main 自动构建部署（.github/workflows/deploy.yml） |
+| 自有服务器 | `https://daizhang.bianzige.cn` | 宝塔服务器 47.85.20.92，nginx 静态站 + Let's Encrypt 证书（acme.sh 自动续期） |
 
-**隐私约定**：仓库与线上部署**不含任何客户数据**（src/seed-data.js 恒为空数组；真实种子只存在本地 `seed-data.local.js`，已被 .gitignore 排除）。线上首次使用请在「设置 → 数据管理 → 导入备份」恢复 JSON 备份。
+**自有服务器部署方式**：本地 `npm run build` → `scp dist/* root@47.85.20.92:/www/wwwroot/daizhang.bianzige.cn/app/dist/` 即生效（nginx 配置留档于 `deploy/nginx/`；SSH 已配公钥免密）。两个入口数据各自独立（浏览器 localStorage 按域名隔离），同一台电脑用两个入口就是两份数据。
+
+**隐私约定**：仓库与线上部署**不含任何客户数据**（src/seed-data.js 恒为空数组；真实种子只存在本地 `seed-data.local.js`，已被 .gitignore 排除）。线上首次使用请在「设置 → 数据管理 → 导入备份」恢复 JSON 备份，或用设置页「客户名单模板导入」。
 
 ## 快速开始
 
