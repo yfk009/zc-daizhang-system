@@ -8,9 +8,10 @@
 | 入口 | 地址 | 说明 |
 |---|---|---|
 | GitHub Pages | `https://yfk009.github.io/zc-daizhang-system/` | 推 main 自动构建部署（.github/workflows/deploy.yml） |
-| 自有服务器 | `https://daizhang.bianzige.cn` | 宝塔服务器 47.85.20.92，nginx 静态站 + Let's Encrypt 证书（acme.sh 自动续期） |
+| 自有服务器（主站） | `https://daizhang.bianzige.cn` | 宝塔服务器 47.85.20.92，nginx 静态站 + Let's Encrypt 证书（acme.sh 自动续期） |
+| 员工分身站 ×3 | `https://dz-xu.bianzige.cn` `https://dz-ye.bianzige.cn` `https://dz-duan.bianzige.cn` | 同一套构建、三个独立数据空间（localStorage 按域名隔离），适合按人各用一库 |
 
-**自有服务器部署方式**：本地 `npm run build` → `scp dist/* root@47.85.20.92:/www/wwwroot/daizhang.bianzige.cn/app/dist/` 即生效（nginx 配置留档于 `deploy/nginx/`；SSH 已配公钥免密）。两个入口数据各自独立（浏览器 localStorage 按域名隔离），同一台电脑用两个入口就是两份数据。
+**自有服务器部署方式**：`bash deploy/deploy-subsite.sh <域名...>` 一键部署/加站（构建→上传→HTTP→证书→HTTPS 全自动）；只更新版本可 `scp dist/* root@47.85.20.92:/www/wwwroot/<域名>/app/dist/`。nginx 配置留档 `deploy/nginx/`；SSH 已配公钥免密。注意：`*.chaifen.bianzige.cn` 三级域名已被「拆分顾问实例」业务（chaifen-instances.conf，9 个后端 8011-8019）占用，加站避开。各入口数据独立（浏览器 localStorage 按域名隔离），同一台电脑用不同入口就是不同数据。
 
 **隐私约定**：仓库与线上部署**不含任何客户数据**（src/seed-data.js 恒为空数组；真实种子只存在本地 `seed-data.local.js`，已被 .gitignore 排除）。线上首次使用请在「设置 → 数据管理 → 导入备份」恢复 JSON 备份，或用设置页「客户名单模板导入」。
 
