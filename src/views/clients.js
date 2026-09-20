@@ -74,10 +74,18 @@ function openEdit(id, ctx) {
     <div class="switch" style="margin-top:6px"><input type="checkbox" id="cf_manual" ${c.tierManual ? 'checked' : ''}><span>手动锁定档位（不随营业额重划）</span></div>
     ${F('revenue', '年营业额（元）', 'number')}
     ${F('annualFee', '年记账费（元）', 'number')}
+    <label style="margin:8px 0 4px;display:block">月记账费（自动核算 = 年记账费 ÷ 12）</label>
+    <input id="cf_monthly" type="number" readonly style="width:100%;background:#f8fafc;color:#475569">
     ${F('contact', '联系人')}${F('phone', '联系电话')}
     ${F('owner', '负责人（人名）')}
     ${F('contractStart', '合同开始（YYYY-MM-DD）', 'date')}${F('contractEnd', '合同到期（YYYY-MM-DD）', 'date')}
     <div class="switch"><input type="checkbox" id="cf_arch" ${c.archived ? 'checked' : ''}><span>归档（退出服务，不再生成任务）</span></div>`;
+  const syncMonthly = () => {
+    const a = parseFloat(document.getElementById('cf_annualFee').value) || 0;
+    document.getElementById('cf_monthly').value = a > 0 ? Math.round(a / 12 * 100) / 100 : '';
+  };
+  syncMonthly();
+  document.getElementById('cf_annualFee').oninput = syncMonthly;
   document.getElementById('cMask').classList.add('on');
 }
 
@@ -85,12 +93,14 @@ async function save() {
   const v = k => document.getElementById('cf_' + k).value.trim();
   if (!v('name')) { toast('请填写公司名称'); return; }
   let c = editId ? state.customers.find(x => x._id === editId) : { _id: newId('c'), source: '新增' };
+  const annualFee = parseFloat(v('annualFee')) || 0;
   Object.assign(c, {
     name: v('name'), taxNo: v('taxNo'),
     taxpayerType: v('taxpayerType') || 'small',
     tier: v('tier'), tierManual: document.getElementById('cf_manual').checked,
     revenue: parseFloat(v('revenue')) || 0,
-    annualFee: parseFloat(v('annualFee')) || 0,
+    annualFee,
+    monthlyFee: annualFee > 0 ? Math.round(annualFee / 12 * 100) / 100 : 0,
     contact: v('contact'), phone: v('phone'), owner: v('owner'),
     contractStart: v('contractStart'), contractEnd: v('contractEnd'),
     archived: document.getElementById('cf_arch').checked,
