@@ -4,8 +4,18 @@ import { esc, toast, fmt } from '../ui.js';
 import { state, getUser } from '../app-state.js';
 import { store } from '../db.js';
 
-const DEFAULT_INPUT = { bookkeeping: 15554, other: 14446 };
-let input = { ...DEFAULT_INPUT };
+let input = { bookkeeping: 0, other: 0 };
+
+// 代账收入默认口径：在服客户「月记账费」之和（未填月费的不计入）
+function ledgerBookkeeping() {
+  let sum = 0, counted = 0, skipped = 0;
+  for (const c of state.customers) {
+    if (c.archived) continue;
+    const fee = parseFloat(c.monthlyFee);
+    if (fee > 0) { sum += fee; counted++; } else skipped++;
+  }
+  return { sum: Math.round(sum * 100) / 100, counted, skipped };
+}
 
 export function render(root, ctx) {
   const s = state.settings;
@@ -16,9 +26,9 @@ export function render(root, ctx) {
     <div>
       <div class="panel">
         <h3>① 收入输入（${state.month}）</h3>
-        <label>代账收入（经常性）</label><input type="number" id="amBook" value="${run?.inputs?.bookkeeping ?? input.bookkeeping}">
-        <label>其他收入（工商/资质/咨询，单次不重复）</label><input type="number" id="amOther" value="${run?.inputs?.other ?? input.other}">
-        <div class="presets"><button id="amDef">默认 3 万口径</button></div>
+        <label>代账收入（经常性）</label><input type="number" id="amBook" value="${run?.inputs?.bookkeeping ?? ledgerBookkeeping().sum}">
+        <label>其他收入（工商/资质/咨询，单次不重复）</label><input type="number" id="amOther" value="${run?.inputs?.other ?? 0}">
+        <div class="presets"><button id="amLedger">📊 按客户台账计算</button></div>
         <div class="alert" id="amAlert" style="display:none"></div>
       </div>
       <div class="panel">
@@ -42,7 +52,12 @@ export function render(root, ctx) {
       </div>
     </div>
   </div>`;
-  root.querySelector('#amDef').onclick = () => { root.querySelector('#amBook').value = DEFAULT_INPUT.bookkeeping; root.querySelector('#amOther').value = DEFAULT_INPUT.other; calc(root); };
+  root.querySelector('#amLedger').onclick = () => {
+    const r = ledgerBookkeeping();
+    root.querySelector('#amBook').value = r.sum;
+    calc(root);
+    toast(`📊 已按客户台账计算：${r.counted} 户月费合计 ¥${fmt(r.sum)}${r.skipped ? `（${r.skipped} 户未填月费未计入）` : ''}`);
+  };
   ['amBook', 'amOther'].forEach(id => root.querySelector('#' + id).oninput = () => calc(root));
   root.querySelector('#amPerf').onchange = e => {
     s.amoeba.perfOn = e.target.checked;
