@@ -21,13 +21,18 @@ export function render(root, ctx) {
   const s = state.settings;
   const run = state.amoebaRuns.find(r => r.month === state.month);
   const isBoss = (getUser() || {}).boss;
+  const lr = ledgerBookkeeping();
+  const ledgerHint = lr.counted
+    ? `台账口径：${lr.counted} 户月费合计 ¥${fmt(lr.sum)}${lr.skipped ? `（${lr.skipped} 户未填月费未计入）` : ''}`
+    : '客户台账暂无月记账费——请先在「客户分层」新增或导入客户名单';
   root.innerHTML = `
   <div class="amoeba-grid">
     <div>
       <div class="panel">
         <h3>① 收入输入（${state.month}）</h3>
-        <label>代账收入（经常性）</label><input type="number" id="amBook" value="${run?.inputs?.bookkeeping ?? ledgerBookkeeping().sum}">
-        <label>其他收入（工商/资质/咨询，单次不重复）</label><input type="number" id="amOther" value="${run?.inputs?.other ?? 0}">
+        <label>代账收入（经常性）</label><input type="number" id="amBook" value="${run?.inputs?.bookkeeping ?? lr.sum}">
+        <div class="muted" style="font-size:12px;margin-top:4px" id="amLedgerHint">${ledgerHint}</div>
+        <label style="margin-top:10px">其他收入（工商/资质/咨询，单次不重复）</label><input type="number" id="amOther" value="${run?.inputs?.other ?? 0}">
         <div class="presets"><button id="amLedger">📊 按客户台账计算</button></div>
         <div class="alert" id="amAlert" style="display:none"></div>
       </div>
@@ -54,7 +59,12 @@ export function render(root, ctx) {
   </div>`;
   root.querySelector('#amLedger').onclick = () => {
     const r = ledgerBookkeeping();
+    if (!r.counted) {
+      toast('⚠️ 客户台账没有可统计的月记账费（0 户）——请先在「客户分层」导入客户名单或补填月费，再来计算');
+      return;
+    }
     root.querySelector('#amBook').value = r.sum;
+    root.querySelector('#amLedgerHint').textContent = `台账口径：${r.counted} 户月费合计 ¥${fmt(r.sum)}${r.skipped ? `（${r.skipped} 户未填月费未计入）` : ''}`;
     calc(root);
     toast(`📊 已按客户台账计算：${r.counted} 户月费合计 ¥${fmt(r.sum)}${r.skipped ? `（${r.skipped} 户未填月费未计入）` : ''}`);
   };
