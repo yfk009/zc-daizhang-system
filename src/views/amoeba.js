@@ -12,7 +12,7 @@ export function render(root, ctx) {
   const run = state.amoebaRuns.find(r => r.month === state.month);
   const isBoss = (getUser() || {}).boss;
   root.innerHTML = `
-  <div class="dlvgrid">
+  <div class="amoeba-grid">
     <div>
       <div class="panel">
         <h3>① 收入输入（${state.month}）</h3>
@@ -23,9 +23,9 @@ export function render(root, ctx) {
       </div>
       <div class="panel">
         <h3>② 团队（设置页可改）</h3>
-        <table><thead><tr><th>姓名</th><th>角色</th><th>权重</th></tr></thead>
-        <tbody>${s.staff.map(p => `<tr><td>${esc(p.name)}</td><td>${esc(p.role)}</td><td>${p.weight}</td></tr>`).join('')}</tbody></table>
-        <div class="switch"><input type="checkbox" id="amPerf" ${s.amoeba.perfOn ? 'checked' : ''}><span>激励金 × 服务绩效系数（SOP 按时完成率）</span></div>
+        <table class="am-team"><thead><tr><th>姓名</th><th>角色</th><th style="width:64px">权重</th></tr></thead>
+        <tbody>${s.staff.map(p => `<tr><td class="nowrap">${esc(p.name)}</td><td class="nowrap">${esc(p.role)}</td><td>${p.weight}</td></tr>`).join('')}</tbody></table>
+        <label class="switch"><input type="checkbox" id="amPerf" ${s.amoeba.perfOn ? 'checked' : ''}><span>激励金 × 服务绩效系数<br><span class="muted">按每人 SOP 按时完成率折算</span></span></label>
         <div id="perfList" style="display:${s.amoeba.perfOn ? 'block' : 'none'}"></div>
       </div>
     </div>

@@ -91,8 +91,10 @@ tr.overdue:hover td, tr.blocked:hover td { filter:brightness(.98); }
 .filters > * { margin:0 8px 8px 0; }
 .filters select, .filters input, .dlvside select, .panel select, .panel input[type=number], .panel input[type=month], .panel input:not([type=file]):not([type=checkbox]):not([data-si]) { padding:6px 9px; border:1px solid #cbd5e1; border-radius:7px; font-size:13px; background:#fff; }
 label { font-size:12px; color:#64748b; display:block; margin:9px 0 4px; }
-.switch { display:flex; align-items:center; margin:10px 0; font-size:13px; cursor:pointer; }
-.switch input { margin-right:8px; width:15px; height:15px; }
+.switch { display:flex; align-items:flex-start; margin:10px 0; font-size:13px; cursor:pointer; line-height:1.6; }
+.switch input { margin-right:8px; margin-top:3px; width:15px; height:15px; flex-shrink:0; }
+.switch span b { font-weight:600; }
+.nowrap { white-space:nowrap; }
 
 .kanban { display:grid; grid-template-columns:repeat(4,1fr); grid-gap:11px; }
 @media (max-width:980px){ .kanban { grid-template-columns:repeat(2,1fr); } }
@@ -127,7 +129,14 @@ label { font-size:12px; color:#64748b; display:block; margin:9px 0 4px; }
 .light.g { background:#16a34a; } .light.y { background:#f59e0b; } .light.r { background:#dc2626; }
 
 .dlvgrid { display:grid; grid-template-columns:290px 1fr; grid-gap:15px; align-items:start; }
+<<<<<<< HEAD
 @media (max-width:880px){ .dlvgrid { grid-template-columns:1fr; } }
+=======
+.amoeba-grid { display:grid; grid-template-columns:360px 1fr; grid-gap:15px; align-items:start; }
+@media (max-width:880px){ .dlvgrid, .amoeba-grid { grid-template-columns:1fr; } }
+.am-team th, .am-team td { white-space:nowrap; }
+.am-team td:last-child { text-align:right; }
+>>>>>>> b5728d3 (阿米巴页排版修复：左栏 290→360px 防表格挤压)
 .coopgrid { display:grid; grid-template-columns:1fr 1fr; grid-gap:15px; align-items:start; }
 .coopgrid table { min-width:0; width:100%; }
 .coopgrid td, .coopgrid th { white-space:normal; word-break:break-word; }
