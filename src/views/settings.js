@@ -16,7 +16,7 @@ export function render(root, ctx) {
     <div>
       <div class="panel">
         <h3>👥 团队与角色映射</h3>
-        <table><thead><tr><th>姓名</th><th>角色</th><th>岗位权重</th><th></th></tr></thead><tbody id="stTb"></tbody></table>
+        <table class="team-table"><thead><tr><th>姓名</th><th>角色</th><th style="width:52px">权重</th><th style="width:40px">操作</th></tr></thead><tbody id="stTb"></tbody></table>
         <button class="btn ghost sm" id="stAdd" style="margin-top:10px">＋ 添加成员</button>
         <div style="margin-top:14px">
           <label>日常任务/催票/归档负责（会计助理）：</label><select id="omAssist">${s.staff.map(p=>`<option ${s.ownersMap.assist===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
@@ -87,7 +87,7 @@ export function render(root, ctx) {
 
   drawStaff(root, ctx);
   root.querySelector('#stAdd').onclick = () => { s.staff.push({ key: 'm' + Date.now(), name: '新成员', role: '会计', weight: 1, boss: false }); drawStaff(root, ctx); };
-  ['omAssist', 'omLead', 'omBoss'].forEach(id => root.querySelector('#' + id).onchange = async e => {
+  ['omAssist', 'omLead', 'omReviewer', 'omDirector', 'omBoss'].forEach(id => root.querySelector('#' + id).onchange = async e => {
     s.ownersMap = { ...s.ownersMap, [id.slice(2).toLowerCase()]: e.target.value };
     await store.upsert('settings', s); toast('角色映射已更新');
   });
@@ -329,16 +329,24 @@ function drawStaff(root, ctx) {
   root.querySelector('#stTb').innerHTML = s.staff.map((p, i) => `<tr>
     <td><input data-si="${i}" data-f="name" value="${esc(p.name)}"></td>
     <td><input data-si="${i}" data-f="role" value="${esc(p.role)}"></td>
-    <td><input data-si="${i}" data-f="weight" type="number" step="0.1" value="${p.weight}" style="width:70px"></td>
-    <td>${s.staff.length > 1 ? `<button class="btn sm danger" data-del="${i}">删</button>` : ''}</td></tr>`).join('');
+    <td><input data-si="${i}" data-f="weight" type="number" step="0.1" value="${p.weight}"></td>
+    <td class="delcell">${s.staff.length > 1 ? `<button class="btn sm danger" data-del="${i}" title="删除此人">删</button>` : '<span class="muted">—</span>'}</td></tr>`).join('');
   root.querySelectorAll('#stTb input').forEach(inp => inp.onchange = async () => {
     const p = s.staff[+inp.dataset.si];
     p[inp.dataset.f] = inp.dataset.f === 'weight' ? (parseFloat(inp.value) || 0) : inp.value;
     await store.upsert('settings', s); toast('已保存');
   });
   root.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+    const victim = s.staff[+b.dataset.del];
     s.staff.splice(+b.dataset.del, 1);
-    await store.upsert('settings', s); drawStaff(root, ctx);
+    // 角色映射指向被删人员时回落到老板（或首位留任者），防止任务派给已删的人
+    const fallback = (s.staff.find(p => p.boss) || s.staff[0] || {}).name || '';
+    for (const k of Object.keys(s.ownersMap)) {
+      if (s.ownersMap[k] === victim.name) s.ownersMap[k] = fallback;
+    }
+    await store.upsert('settings', s);
+    toast(fallback ? `已删除「${victim.name}」；其担任的角色已回落到「${fallback}」` : `已删除「${victim.name}」`);
+    drawStaff(root, ctx); render(root, ctx);
   });
 }
 

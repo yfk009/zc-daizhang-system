@@ -181,7 +181,11 @@ label { font-size:12px; color:#64748b; display:block; margin:9px 0 4px; }
 #zx_toast { position:fixed; top:64px; left:50%; transform:translateX(-50%); background:#1e293b; color:#fff; padding:9px 20px; border-radius:20px; font-size:13px; display:none; z-index:200; box-shadow:0 4px 12px rgba(0,0,0,.2); }
 .muted { color:#94a3b8; font-size:12px; }
 input[type=checkbox] { accent-color:#2563eb; width:15px; height:15px; }
-#stTb input { border:1px solid #e2e8f0; border-radius:6px; padding:4px 7px; font-size:13px; width:100px; }
+#stTb input { border:1px solid #e2e8f0; border-radius:6px; padding:4px 7px; font-size:13px; width:100%; box-sizing:border-box; min-width:0; }
+.team-table { min-width:0 !important; width:100%; }
+.team-table th, .team-table td { padding:6px 5px; }
+.team-table .delcell { text-align:center; }
+.team-table .delcell .btn { padding:3px 8px; }
 
 /* 窄屏/旧内核兜底 */
 @media (max-width:760px){
