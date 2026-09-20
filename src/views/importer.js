@@ -325,15 +325,15 @@ async function autoProcess(root, ctx) {
       if (client) { matchedCnt++; }
       else {
         let annualRev = m.annualRev ?? null;
-        let tier;
-        if (annualRev != null) tier = tierOf(annualRev);
-        else if (m.revenue) { annualRev = Math.round(m.revenue * 12); tier = tierOf(annualRev); }
-        else if (m.taxTotal) tier = 'S2';
-        else { annualRev = 0; tier = 'S1'; }
+        let tier, ttype;
+        if (annualRev != null) { ttype = annualRev >= 5000000 ? 'general' : 'small'; tier = tierOf({ revenue: annualRev, taxpayerType: ttype }); }
+        else if (m.revenue) { annualRev = Math.round(m.revenue * 12); ttype = annualRev >= 5000000 ? 'general' : 'small'; tier = tierOf({ revenue: annualRev, taxpayerType: ttype }); }
+        else if (m.taxTotal) { ttype = 'small'; tier = 'S2'; }
+        else { annualRev = 0; ttype = 'small'; tier = 'S1'; }
         client = {
           _id: newId('c'), name: m.name, taxNo: '', source: '表格导入',
           revenue: annualRev || 0, annualFee: m.fee || 0, monthlyFee: 0,
-          tier, tierManual: false, archived: false,
+          taxpayerType: ttype, tier, tierManual: false, archived: false,
           ownerRole: tier === 'S1' ? 'assist' : 'lead',
           owner: tier === 'S1' ? (s.ownersMap.assist || '') : (s.ownersMap.lead || ''),
           contact: '', phone: '', contractStart: '', contractEnd: '',

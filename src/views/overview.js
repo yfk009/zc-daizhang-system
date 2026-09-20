@@ -10,7 +10,7 @@ export async function render(root, ctx) {
     root.innerHTML = `
     <div class="panel" style="text-align:center;padding:40px">
       <h3 style="justify-content:center">📅 ${state.month} 月度任务尚未生成</h3>
-      <p class="muted" style="margin:10px 0 18px">系统将按三档服务包（S1 批量 / S2 标准 / S3 深度）为 68 家客户自动生成任务清单</p>
+      <p class="muted" style="margin:10px 0 18px">系统将按五档服务体系（S1 零申报托管 4 项 / S2–S5 十八项任务制）为全部在服客户自动生成任务清单</p>
       <button class="btn" id="genBtn">⚙️ 生成 ${state.month} 任务清单</button>
     </div>`;
     root.querySelector('#genBtn').onclick = generate;
@@ -40,7 +40,7 @@ export async function render(root, ctx) {
     <div class="card ${bads.length ? 'warn' : ''}"><div class="k">逾期 / 受阻 / 问题</div><div class="v">${bads.length}<small> 项</small></div></div>
   </div>
   <div class="tiers">
-    ${['S3', 'S2', 'S1'].map(tier => {
+    ${['S5', 'S4', 'S3', 'S2', 'S1'].map(tier => {
       const ts = state.tasks.filter(t => t.tier === tier);
       const d = ts.reduce((a, t) => a + unitDone(t), 0), n = ts.reduce((a, t) => a + unitCount(t), 0);
       const nClients = state.customers.filter(c => !c.archived && c.tier === tier).length;

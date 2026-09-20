@@ -24,11 +24,11 @@ export function render(root, ctx) {
   root.innerHTML = `
   <div class="dlvgrid">
     <div class="dlvside">
-      <label>选择客户（S2/S3 经营户）</label>
+      <label>选择客户（S2–S5 经营户）</label>
       <select id="dlvClient">${actives.map(c => `<option value="${c._id}" ${c._id===curClient?'selected':''}>${esc(c.name)}</option>`).join('')}</select>
       <label>交付物类型</label>
       <div class="types">${TYPES.map(t => `<button class="${t.k===curType?'on':''}" data-t="${t.k}">${t.label}</button>`).join('')}</div>
-      <div class="muted" style="margin-top:10px">数据自动取自金蝶导入；未导入的栏位可手工填写。出图后发微信群，再回任务清单打勾。S1 休眠户无月度交付物。</div>
+      <div class="muted" style="margin-top:10px">数据自动取自金蝶导入；未导入的栏位可手工填写。出图后发微信群，再回任务清单打勾。S1 零申报托管户无月度交付物。</div>
     </div>
     <div class="paper" id="dlvPaper"></div>
   </div>`;

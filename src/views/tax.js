@@ -19,7 +19,7 @@ export function render(root, ctx) {
   <div class="banner">⚠️ <b>铁律：客户未确认，不申报。</b>&nbsp;当前 <b>${blocked}</b> 户未确认；客户 24 小时未回复 → 电话确认；征期最后一天仍未回复 → 老板裁决。
     <span class="muted">（账务数据月：${dm}，可先在「数据导入」带入金蝶数据）</span></div>
   <div class="panel">
-    <h3>💰 ${state.month} 税金确认跟踪（S2+S3 共 ${actives.length} 户）</h3>
+    <h3>💰 ${state.month} 税金确认跟踪（S2–S5 共 ${actives.length} 户）</h3>
     <table id="taxTable"><thead><tr>
       <th>客户</th><th>档位</th><th>增值税</th><th>附加税</th><th>个税</th><th>企税预缴</th><th>合计应缴</th><th>状态</th><th>确认信息</th><th style="width:230px">操作</th>
     </tr></thead><tbody>

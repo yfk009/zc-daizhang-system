@@ -19,9 +19,11 @@ export function render(root, ctx) {
         <table><thead><tr><th>姓名</th><th>角色</th><th>岗位权重</th><th></th></tr></thead><tbody id="stTb"></tbody></table>
         <button class="btn ghost sm" id="stAdd" style="margin-top:10px">＋ 添加成员</button>
         <div style="margin-top:14px">
-          <label>S1 批量任务负责（助理）：</label><select id="omAssist">${s.staff.map(p=>`<option ${s.ownersMap.assist===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
-          <label>S2/S3 日常任务负责（主办会计）：</label><select id="omLead">${s.staff.map(p=>`<option ${s.ownersMap.lead===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
-          <label>S3 预算/沟通会/复盘负责（老板）：</label><select id="omBoss">${s.staff.map(p=>`<option ${s.ownersMap.boss===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
+          <label>日常任务/催票/归档负责（会计助理）：</label><select id="omAssist">${s.staff.map(p=>`<option ${s.ownersMap.assist===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
+          <label>做账/申报/预算负责（主办会计）：</label><select id="omLead">${s.staff.map(p=>`<option ${s.ownersMap.lead===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
+          <label>100% 复核/巡检负责（审核会计）：</label><select id="omReviewer">${s.staff.map(p=>`<option ${s.ownersMap.reviewer===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
+          <label>经营沟通会/年度复盘（项目负责人）：</label><select id="omDirector">${s.staff.map(p=>`<option ${s.ownersMap.director===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
+          <label>终审裁决/抽查（老板）：</label><select id="omBoss">${s.staff.map(p=>`<option ${s.ownersMap.boss===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
           <p class="muted" style="margin-top:6px">改动后新生成的任务按新映射指派；已有任务不变。</p>
         </div>
       </div>

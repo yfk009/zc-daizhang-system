@@ -75,7 +75,7 @@ ok(upd.annualFee === 7200 && upd.monthlyFee === 600, '更新后年费/月费取�
 ok(upd.revenue === 800000 && upd.tier === 'S2' && upd.ownerRole === 'lead', '营业额快照变化 → 分级重判 S3→S2');
 const created = plan.creates.find(d => d.name === '昆明新增商贸有限公司');
 ok(created && created._id === 'c_069', '新客户序号接续 c_069');
-ok(created.tier === 'S3' && created.monthlyFee === 200, '新客户分级 150万→S3、月费 200');
+ok(created.tier === 'S2' && created.monthlyFee === 200, '新客户 150万（身份未设→小规模）→S2、月费 200');
 const dorm = plan.creates.find(d => d.name === '云南休眠户贸易有限公司');
 ok(dorm && dorm.tier === 'S1' && dorm.ownerRole === 'assist', '零营业额→S1 归助理');
 ok(dorm.remark === '合同待补录' && dorm.contractEnd === '2025-12-31', '备注/到期日随档案入库');

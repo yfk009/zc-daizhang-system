@@ -195,7 +195,9 @@ function buildDoc(it, prev, newId) {
     : (prev ? (prev.annualFee ?? 0) : 0));
   const revenue = it.revenue != null ? it.revenue : (prev ? (prev.revenue ?? 0) : 0);
   const tierManual = prev ? prev.tierManual === true : false; // 手动锁档客户不重划
-  const tier = tierManual && prev ? (prev.tier || tierOf(revenue)) : tierOf(revenue);
+  // 五档口径（4.0）：身份未知的新客户按营业额启发式推定（≥500万视为一般纳税人）
+  const taxpayerType = prev && prev.taxpayerType ? prev.taxpayerType : (revenue >= 5000000 ? 'general' : 'small');
+  const tier = tierManual && prev ? (prev.tier || tierOf({ revenue, taxpayerType })) : tierOf({ revenue, taxpayerType });
   const ownerRole = tier === 'S1' ? 'assist' : 'lead';
   return {
     ...(prev || {}),
@@ -205,7 +207,7 @@ function buildDoc(it, prev, newId) {
     source: it.source || (prev ? prev.source || '' : ''),
     contractStart: it.start || (prev ? prev.contractStart || '' : ''),
     contractEnd: it.end || (prev ? prev.contractEnd || '' : ''),
-    annualFee, monthlyFee: r2(annualFee / 12), revenue,
+    annualFee, monthlyFee: r2(annualFee / 12), revenue, taxpayerType,
     contact: it.contact || (prev ? prev.contact || '' : ''),
     phone: it.phone || (prev ? prev.phone || '' : ''),
     introducer: it.introducer || (prev ? prev.introducer || '' : ''),

@@ -23,7 +23,7 @@ export const DEFAULT_SETTINGS = {
     { key: 'lead', name: '小王', role: '主办会计', weight: 1.5, boss: false },
     { key: 'assist', name: '小李', role: '兼职助理', weight: 0.8, boss: false },
   ],
-  ownersMap: { boss: '老板', lead: '小王', assist: '小李' },
+  ownersMap: { boss: '老板', director: '老板', lead: '小王', reviewer: '小王', assist: '小李' },
   amoeba: {
     divPct: 30, opsPct: 70, fixedPct: 80, officePct: 20,
     baseSalary: 3000, perfOn: false,
@@ -33,12 +33,36 @@ export const DEFAULT_SETTINGS = {
   disabledTemplateKeys: [],   // 停用的模板 key（内置或自定义）
 };
 
+// 数据迁移：v2 = 代账4.0 五档口径（S1–S5 + 纳税人身份 + 5 角色）
+const SCHEMA_KEY = 'zx_schema_version';
+async function migrateV2() {
+  if (localStorage.getItem(SCHEMA_KEY) === '2') return;
+  const customers = await store.list('customers');
+  let changed = 0;
+  for (const c of customers) {
+    const before = JSON.stringify([c.tier, c.taxpayerType]);
+    // 旧 S3（营业额>100万深度户）默认按一般纳税人处理，其余默认小规模；客户页可改
+    if (!c.taxpayerType) c.taxpayerType = c.tier === 'S3' ? 'general' : 'small';
+    if (!c.tierManual) {
+      c.tier = tierOf({ revenue: c.revenue, taxpayerType: c.taxpayerType });
+    }
+    if (JSON.stringify([c.tier, c.taxpayerType]) !== before) {
+      await store.upsert('customers', c);
+      changed++;
+    }
+  }
+  localStorage.setItem(SCHEMA_KEY, '2');
+  if (changed) console.log(`[migrate] v2 五档口径：已迁移 ${changed} 家客户`);
+}
+
 export async function loadAll() {
+  await migrateV2();
   const s = await store.list('settings');
   state.settings = s.find(x => x._id === 'settings_main') || { ...DEFAULT_SETTINGS };
   for (const k of Object.keys(DEFAULT_SETTINGS)) {
     if (state.settings[k] === undefined) state.settings[k] = DEFAULT_SETTINGS[k];
   }
+  state.settings.ownersMap = { ...DEFAULT_SETTINGS.ownersMap, ...(state.settings.ownersMap || {}) };
   state.customers = await store.list('customers');
   state.tasks = await store.list('monthTasks', { month: state.month });
   state.tax = await store.list('taxConfirm', { month: state.month });
@@ -52,14 +76,16 @@ export async function reloadMonth() {
 }
 
 // 初始化 68 家种子客户（tier/负责人按规则写入）；仓库默认空种子，本地生成真实种子用 scripts/gen-seed.mjs
+// 五档口径：零申报→S1；有经营且年营业额>100万的种子户按一般纳税人推档（S3/S4/S5），其余小规模→S2
 export async function seedCustomers() {
   if (!SEED_CUSTOMERS.length) return { skipped: true, count: 0, empty: true };
   const existing = await store.list('customers');
   if (existing.length > 0) return { skipped: true, count: existing.length };
   const docs = SEED_CUSTOMERS.map(c => {
-    const tier = tierOf(c.revenue);
+    const taxpayerType = c.revenue > 1000000 ? 'general' : 'small';
+    const tier = tierOf({ revenue: c.revenue, taxpayerType });
     return {
-      ...c, tier,
+      ...c, tier, taxpayerType,
       ownerRole: tier === 'S1' ? 'assist' : 'lead',
       owner: tier === 'S1' ? '小李' : '小王',
       tierManual: false,

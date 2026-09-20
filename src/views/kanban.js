@@ -58,9 +58,11 @@ export function render(root, ctx) {
     <label>适用档位（客户型任务）</label>
     <select id="kaTiers" style="width:100%">
       <option value="ALL">全部档位</option>
-      <option value="S3">仅 S3 实体户</option>
-      <option value="S2">仅 S2 微型户</option>
-      <option value="S1">仅 S1 休眠户</option>
+      <option value="S5">仅 S5 尊享管家</option>
+      <option value="S4">仅 S4 经营管家</option>
+      <option value="S3">仅 S3 标准经营（一般纳税≤500万）</option>
+      <option value="S2">仅 S2 标准经营（小规模）</option>
+      <option value="S1">仅 S1 零申报托管</option>
     </select>
     <label>生效范围 *</label>
     <select id="kaScope" style="width:100%">
@@ -127,7 +129,7 @@ async function doAdd(root, ctx) {
     } else {
       for (const c of state.customers) {
         if (c.archived) continue;
-        const tier = c.tier || tierOf(c.revenue);
+        const tier = c.tier || tierOf(c);
         if (tiers.includes('ALL') || tiers.includes(tier)) {
           docs.push({ _id: `t_${state.month}_${c._id}_${tpl.key}`, month: state.month, type: 'client', clientId: c._id, clientName: c.name, tier, key: tpl.key, name, week: addWeek, due, ownerRole: role, owner, state: 'todo', doneAt: null, note: '' });
         }
