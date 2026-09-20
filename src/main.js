@@ -10,6 +10,8 @@ import * as kanban from './views/kanban.js';
 import * as tasks from './views/tasks.js';
 import * as tax from './views/tax.js';
 import * as deliverables from './views/deliverables.js';
+import * as cooperation from './views/cooperation.js';
+import * as services from './views/services.js';
 import * as clients from './views/clients.js';
 import * as importer from './views/importer.js';
 import * as amoeba from './views/amoeba.js';
@@ -21,6 +23,8 @@ const TABS = [
   { k: 'tasks', label: '✅ 任务清单', mod: tasks, render: (r, c) => tasks.render(r, c) },
   { k: 'tax', label: '💰 税金确认', mod: tax, render: (r, c) => tax.render(r, c) },
   { k: 'dlv', label: '📤 交付物', mod: deliverables, render: (r, c) => deliverables.render(r, c) },
+  { k: 'coop', label: '🤝 客户配合', mod: cooperation, render: (r, c) => cooperation.render(r, c) },
+  { k: 'svc', label: '🧾 增值服务', mod: services, render: (r, c) => services.render(r, c) },
   { k: 'clients', label: '👥 客户分层', mod: clients, render: (r, c) => clients.render(r, c) },
   { k: 'imp', label: '📥 数据导入', mod: importer, render: (r, c) => importer.render(r, c) },
   { k: 'amoeba', label: '🧮 阿米巴', mod: amoeba, render: (r, c) => amoeba.render(r, c) },

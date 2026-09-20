@@ -61,6 +61,26 @@ export const TASK_LIBRARY = [
   T(22, 'strategy', '年度战略复盘（次年预算框架）', 4, 28, 'director', { cycle: 'december' }),
 ];
 
+// 团队级固定任务（不挂客户）：21号交付复核 + 年度专项节点（按月切换，源自终稿《日程表》⑤）
+export const ANNUAL_NODES = {
+  '01': '年终决算 + 四季度申报 + 房产税/土地使用税',
+  '02': '上年度汇算清缴底稿启动（5/31 截止）',
+  '03': '汇算清缴推进 + 个税年度汇算开始 + 代账机构备案材料',
+  '04': '一季度申报 + 代账机构年度备案（4/30★）',
+  '05': '汇算清缴申报（5/31★★）',
+  '06': '工商年报公示（6/30★★，S2–S5 赠送代办）',
+  '07': '二季度申报 + 房产税/土地使用税（半年）',
+  '08': '半年度经营复盘 + 社保基数调整',
+  '09': '三季度预算修正 + 年末税负筹划预案',
+  '10': '三季度申报 + 四季度预算框架制定',
+  '11': '房产税/土地使用税（半年）+ 年度票据清理',
+  '12': '全年决算 + 年度审计准备 + S1 年度存续确认（12/31★）',
+};
+const TEAM_TASKS = [
+  { key: 'dlv_check', name: '交付物齐全性复核（21号按档核对，缺失当日补送）', week: 3, due: 21, role: 'assist' },
+  { key: 'annual_node', name: '年度专项准备（30号前，按月节点）', week: 4, due: 30, role: 'lead' },
+];
+
 export const WEEK_NAMES = [
   'W1 · 1-7号 收票做账', 'W2 · 8-15号 申报', 'W3 · 16-25号 报表沟通', 'W4 · 26-月底 复盘',
 ];
@@ -120,6 +140,20 @@ export function buildMonthTasks(month, customers, ownersMap, opts = {}) {
         _id: `t_${month}_${c._id}_${tpl.key}`, type: 'client',
         clientId: c._id, clientName: c.name, tier,
         key: tpl.key, name: tpl.name, week: tpl.week, due: tpl.due,
+        ownerRole: tpl.role, owner: ownerOf(tpl.role),
+      }));
+    }
+  }
+
+  // 团队级固定任务（有客户才生成）
+  if (active.length > 0) {
+    for (const tpl of TEAM_TASKS) {
+      if (disabled.has(tpl.key)) continue;
+      const name = tpl.key === 'annual_node' ? `年度专项：${ANNUAL_NODES[mm] || ''}` : tpl.name;
+      docs.push(mk({
+        _id: `t_${month}_team_${tpl.key}`, type: 'team', tier: 'ALL',
+        clientName: `【团队】${tpl.key === 'annual_node' ? '年度专项节点' : '交付复核'}`,
+        key: tpl.key, name, week: tpl.week, due: tpl.due,
         ownerRole: tpl.role, owner: ownerOf(tpl.role),
       }));
     }

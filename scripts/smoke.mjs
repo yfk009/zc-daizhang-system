@@ -47,7 +47,8 @@ const s1c = customers.filter(c => c.tier === 'S1');
 eq('S1 批量任务组数（核对/申报/巡检）', docs.filter(d => d.tier === 'S1' && d.type === 'batch' && d.key !== 's1_annual').length, 3);
 eq('S1 批量清单覆盖家数', docs.find(d => d.key === 's1_check').checklist.length, s1c.length);
 eq('S2–S5 每户任务数（15 月度 + 1 季度 = 16）', docs.filter(d => d.type === 'client').length, paid.length * 16);
-eq('无团队级独立任务（复盘并入 T16）', docs.filter(d => d.type === 'team').length, 0);
+eq('团队级固定任务（21号交付复核 + 年度专项节点）', docs.filter(d => d.type === 'team' && d.key !== 'cx_test2').length, 2);
+eq('年度专项任务按月切换（9月）', docs.find(d => d.key === 'annual_node').name.includes('三季度预算修正'), true);
 eq('9月不含年度存续确认', docs.filter(d => d.key === 's1_annual').length, 0);
 eq('每户有税金确认任务（铁律）', docs.filter(d => d.key === 'taxconfirm').length, paid.length);
 eq('每户有申报任务', docs.filter(d => d.key === 'filing').length, paid.length);
@@ -72,7 +73,7 @@ eq('幂等：两次生成 _id 集合一致', again.every(d => docs.find(x => x._
 
 // 5) 单元统计口径
 const totalUnits = docs.reduce((a, t) => a + unitCount(t), 0);
-eq('任务总单元数（S1×3 + S2–S5×16）', totalUnits, s1c.length * 3 + paid.length * 16);
+eq('任务总单元数（S1×3 + S2–S5×16 + 团队 2）', totalUnits, s1c.length * 3 + paid.length * 16 + 2);
 
 // 6) 看板编辑：自定义模板 + 停用过滤
 const cxTpl = { key: 'cx_test1', name: '发工资表收集提醒', week: 2, due: 5, role: 'lead', tiers: ['ALL'], type: 'client' };

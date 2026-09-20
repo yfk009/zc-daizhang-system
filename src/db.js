@@ -110,7 +110,7 @@ export const store = {
 /* 导出/导入整库备份（单机模式的生命线） */
 export function exportAllLocal() {
   const out = {};
-  ['customers', 'monthTasks', 'taxConfirm', 'financials', 'amoebaRuns', 'settings'].forEach(c => { out[c] = lsRead(c); });
+  ['customers', 'monthTasks', 'taxConfirm', 'financials', 'amoebaRuns', 'coop', 'risknotices', 'serviceOrders', 'settings'].forEach(c => { out[c] = lsRead(c); });
   return out;
 }
 export async function importAllLocal(data) {
@@ -124,7 +124,7 @@ export async function importAllLocal(data) {
 
 /* 清空全部业务数据（保留 settings 团队/参数；置种子标记防自动重播） */
 export async function wipeAll() {
-  const colls = ['customers', 'monthTasks', 'taxConfirm', 'financials', 'amoebaRuns'];
+  const colls = ['customers', 'monthTasks', 'taxConfirm', 'financials', 'amoebaRuns', 'coop', 'risknotices', 'serviceOrders'];
   for (const c of colls) {
     if (mode === 'cloud') {
       const docs = await store.list(c);

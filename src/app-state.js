@@ -11,6 +11,9 @@ export const state = {
   tax: [],          // 当月税金确认
   financials: [],   // 全部财务数据
   amoebaRuns: [],
+  coop: [],         // 当月客户配合数据（收口/12项清单/回执）
+  risknotices: [],  // 风险告知书登记
+  serviceOrders: [],// 增值服务单
   settings: null,
 };
 
@@ -68,11 +71,15 @@ export async function loadAll() {
   state.tax = await store.list('taxConfirm', { month: state.month });
   state.financials = await store.list('financials');
   state.amoebaRuns = await store.list('amoebaRuns');
+  state.coop = await store.list('coop', { month: state.month });
+  state.risknotices = await store.list('risknotices');
+  state.serviceOrders = await store.list('serviceOrders');
 }
 
 export async function reloadMonth() {
   state.tasks = await store.list('monthTasks', { month: state.month });
   state.tax = await store.list('taxConfirm', { month: state.month });
+  state.coop = await store.list('coop', { month: state.month });
 }
 
 // 初始化 68 家种子客户（tier/负责人按规则写入）；仓库默认空种子，本地生成真实种子用 scripts/gen-seed.mjs
