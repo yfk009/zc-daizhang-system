@@ -1,6 +1,6 @@
 // 设置：团队与角色映射 / 阿米巴参数 / 凭证开关 / 数据备份 / 种子初始化
 import { esc, toast } from '../ui.js';
-import { state, loadAll, seedCustomers } from '../app-state.js';
+import { state, loadAll, reloadMonth, seedCustomers } from '../app-state.js';
 import { store, exportAllLocal, importAllLocal, wipeAll, getUser } from '../db.js';
 import { parseClientTemplate, planClientImport } from '../client-template.js';
 
@@ -24,7 +24,7 @@ export function render(root, ctx) {
           <label>100% 复核/巡检负责（审核会计）：</label><select id="omReviewer">${s.staff.map(p=>`<option ${s.ownersMap.reviewer===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
           <label>经营沟通会/年度复盘（项目负责人）：</label><select id="omDirector">${s.staff.map(p=>`<option ${s.ownersMap.director===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
           <label>终审裁决/抽查（老板）：</label><select id="omBoss">${s.staff.map(p=>`<option ${s.ownersMap.boss===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
-          <p class="muted" style="margin-top:6px">改动后新生成的任务按新映射指派；已有任务不变。</p>
+          <p class="muted" style="margin-top:6px">改动后本月已有任务与新生成任务都会同步按新映射指派；个别任务也可在「经营总览」单独改派。</p>
         </div>
       </div>
       <div class="panel">
@@ -88,8 +88,12 @@ export function render(root, ctx) {
   drawStaff(root, ctx);
   root.querySelector('#stAdd').onclick = () => { s.staff.push({ key: 'm' + Date.now(), name: '新成员', role: '会计', weight: 1, boss: false }); drawStaff(root, ctx); };
   ['omAssist', 'omLead', 'omReviewer', 'omDirector', 'omBoss'].forEach(id => root.querySelector('#' + id).onchange = async e => {
-    s.ownersMap = { ...s.ownersMap, [id.slice(2).toLowerCase()]: e.target.value };
-    await store.upsert('settings', s); toast('角色映射已更新');
+    const role = id.slice(2).toLowerCase();
+    s.ownersMap = { ...s.ownersMap, [role]: e.target.value };
+    await store.upsert('settings', s);
+    // 责任人同步：本月已有任务按新映射实时改派
+    const n = await reassignRoleTasks(role, e.target.value);
+    toast(n ? `角色映射已更新，本月 ${n} 条任务已同步给「${e.target.value}」` : '角色映射已更新');
   });
   root.querySelectorAll('input[data-ratio]').forEach(i => i.onchange = async () => {
     s.amoeba[i.dataset.ratio] = parseFloat(i.value) || 0;
@@ -338,16 +342,43 @@ function drawStaff(root, ctx) {
   });
   root.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
     const victim = s.staff[+b.dataset.del];
+    // 同级别优先：先找同岗位（角色文本相同）的留任者承接；没有则回落老板/首位留任者
+    const sameLevel = s.staff.find(p => p !== victim && p.role === victim.role);
+    const fallback = (s.staff.find(p => p.boss && p !== victim) || s.staff.find(p => p !== victim) || {}).name || '';
+    const target = (sameLevel || {}).name || fallback;
     s.staff.splice(+b.dataset.del, 1);
-    // 角色映射指向被删人员时回落到老板（或首位留任者），防止任务派给已删的人
-    const fallback = (s.staff.find(p => p.boss) || s.staff[0] || {}).name || '';
     for (const k of Object.keys(s.ownersMap)) {
-      if (s.ownersMap[k] === victim.name) s.ownersMap[k] = fallback;
+      if (s.ownersMap[k] === victim.name) s.ownersMap[k] = target;
+    }
+    // 责任人承接：本月所有由被删人负责的任务，自动移交给其角色的新承接人
+    const tasks = await store.list('monthTasks', { month: state.month });
+    let n = 0;
+    for (const t of tasks) {
+      if (t.owner !== victim.name) continue;
+      t.owner = (t.ownerRole && s.ownersMap[t.ownerRole]) || target;
+      await store.upsert('monthTasks', t);
+      n++;
     }
     await store.upsert('settings', s);
-    toast(fallback ? `已删除「${victim.name}」；其担任的角色已回落到「${fallback}」` : `已删除「${victim.name}」`);
-    drawStaff(root, ctx); render(root, ctx);
+    await reloadMonth();
+    toast(`已删除「${victim.name}」${target ? `，角色由「${target}」承接` : ''}${n ? `；本月 ${n} 条任务已自动改派` : ''}`);
+    render(root, ctx);
   });
+}
+
+// 角色映射变更/删除承接后：把本月该角色的任务改派给新责任人
+async function reassignRoleTasks(role, name) {
+  const tasks = await store.list('monthTasks', { month: state.month });
+  let n = 0;
+  for (const t of tasks) {
+    if (t.ownerRole === role && t.owner !== name) {
+      t.owner = name;
+      await store.upsert('monthTasks', t);
+      n++;
+    }
+  }
+  await reloadMonth();
+  return n;
 }
 
 function exportBackup() {

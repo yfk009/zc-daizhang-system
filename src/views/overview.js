@@ -52,7 +52,7 @@ export async function render(root, ctx) {
   <div class="panel">
     <h3>⏰ 逾期 / 受阻 / 问题（点击跳转处理）</h3>
     <table><thead><tr><th>客户</th><th>任务</th><th>档位</th><th>责任人</th><th>状态</th><th>说明</th></tr></thead>
-    <tbody>${bads.slice(0, 20).map(t => { const [cl, txt] = vstate(t); return `<tr class="${cl}" style="cursor:pointer" data-jump="${esc(t.name)}"><td>${esc(t.clientName)}</td><td>${esc(t.name)}</td><td><span class="tag ${t.tier}">${t.tier}</span></td><td>${esc(t.owner)}</td><td><span class="st ${cl}">${txt}</span></td><td class="muted">${t.state === 'issue' ? esc(t.note || '') : (cl === 'blocked' ? '税金未确认，申报受阻' : '已逾期，需今日处理')}</td></tr>`; }).join('') || '<tr><td colspan="6" class="muted" style="text-align:center;padding:16px">🎉 本月无逾期、无受阻——主动服务节奏保持得很好</td></tr>'}</tbody></table>
+    <tbody>${bads.slice(0, 20).map(t => { const [cl, txt] = vstate(t); return `<tr class="${cl}" style="cursor:pointer" data-jump="${esc(t.name)}"><td>${esc(t.clientName)}</td><td>${esc(t.name)}</td><td><span class="tag ${t.tier}">${t.tier}</span></td><td onclick="event.stopPropagation()"><select data-oid="${t._id}" style="max-width:110px">${ownerOptions(t.owner)}</select></td><td><span class="st ${cl}">${txt}</span></td><td class="muted">${t.state === 'issue' ? esc(t.note || '') : (cl === 'blocked' ? '税金未确认，申报受阻' : '已逾期，需今日处理')}</td></tr>`; }).join('') || '<tr><td colspan="6" class="muted" style="text-align:center;padding:16px">🎉 本月无逾期、无受阻——主动服务节奏保持得很好</td></tr>'}</tbody></table>
   </div>
   <div class="panel">
     <h3>📈 四周节奏进度</h3>
@@ -65,6 +65,23 @@ export async function render(root, ctx) {
     }).join('')}
   </div>`;
   root.querySelectorAll('tr[data-jump]').forEach(tr => tr.onclick = () => ctx.jumpTask(tr.dataset.jump));
+  // 手动改派：下拉选择后保存该任务的责任人
+  root.querySelectorAll('[data-oid]').forEach(sel => sel.onchange = async () => {
+    const t = state.tasks.find(x => x._id === sel.dataset.oid);
+    if (!t) return;
+    t.owner = sel.value;
+    await store.upsert('monthTasks', t);
+    await reloadMonth();
+    toast(`✓ 该任务已单独改派给「${sel.value}」（团队映射变更时此条仍会跟随角色同步）`);
+    render(document.getElementById('view'), ctx);
+  });
+}
+
+// 责任人下拉：团队成员 + 当前值（若已不在团队中则保留显示，避免丢失信息）
+function ownerOptions(cur) {
+  const names = state.settings.staff.map(p => p.name);
+  const list = names.includes(cur) ? names : [cur, ...names];
+  return list.map(n => `<option value="${esc(n)}" ${n === cur ? 'selected' : ''}>${esc(n)}</option>`).join('');
 }
 
 export async function generate() {
