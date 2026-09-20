@@ -3,4 +3,4 @@
 export const CLOUDBASE_ENV = '';
 
 export const APP_NAME = '掌兴代账 · 客户服务管理系统';
-export const VERSION = 'v1.1.0 智能导入版';
+export const VERSION = 'v4.2.0 五档任务制 · 客户配合 + 增值服务';
