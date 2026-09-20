@@ -27,16 +27,16 @@ export function render(root, ctx) {
       <input id="ctSearch" placeholder="搜索客户名…" value="${esc(q)}" style="flex:1;min-width:140px">
       <button class="btn sm" id="addBtn">＋ 新增客户</button>
     </div>
-    <table><thead><tr><th>客户名称</th><th>档位</th><th>纳税人身份</th><th>年营业额</th><th>月记账费</th><th>月任务项</th><th>负责人</th><th>合同到期</th><th>操作</th></tr></thead>
+    <table><thead><tr><th>客户名称</th><th>档位</th><th>纳税人身份</th><th>年营业额</th><th>月记账费</th><th>年记账费</th><th>负责人</th><th>合同到期</th><th>操作</th></tr></thead>
     <tbody>${list.map(c => {
-      const monthly = { S1: '4 项(批)', S2: '18 项', S3: '18 项', S4: '18 项', S5: '18 项' }[c.tier];
       const tt = c.taxpayerType === 'general' ? '一般纳税人' : (c.taxpayerType === 'small' ? '小规模' : '未设置');
       return `<tr><td>${esc(c.name)}${c.archived ? ' <span class="st todo">已归档</span>' : ''}</td>
       <td><span class="tag ${c.tier}">${c.tier}${c.tierManual ? '·手' : ''}</span></td>
       <td>${tt}</td>
       <td>${c.revenue ? c.revenue.toLocaleString() : '—'}</td>
-      <td>${c.monthlyFee ? '¥' + c.monthlyFee.toLocaleString() : (c.annualFee ? '¥' + c.annualFee.toLocaleString() + '/年' : '⚠️ 0')}</td>
-      <td>${monthly}</td><td>${esc(c.owner || '')}</td><td>${c.contractEnd || '—'}</td>
+      <td>${c.monthlyFee ? '¥' + c.monthlyFee.toLocaleString() : '—'}</td>
+      <td>${c.annualFee ? '¥' + c.annualFee.toLocaleString() : '—'}</td>
+      <td>${esc(c.owner || '')}</td><td>${c.contractEnd || '—'}</td>
       <td><button class="btn sm ghost" data-edit="${c._id}">编辑</button></td></tr>`;
     }).join('')}</tbody></table>
     <div class="muted" style="margin-top:8px">档位规则（4.0 五档）：零申报→S1 托管；小规模有经营→S2；一般纳税人按年营业额 ≤500万→S3、500–1000万→S4、1000–3000万→S5，一口价无折扣。每年 1 月按上年营业额统一重划，个案可手动调档（标"手"）；调档后下月任务按新档生成。</div>
