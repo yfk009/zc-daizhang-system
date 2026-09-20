@@ -68,7 +68,7 @@ export async function render(root, ctx) {
     </tbody></table>
   </div>
 
-  <div class="dlvgrid">
+  <div class="coopgrid">
     <div class="panel">
       <h3>📞 三催一升级时间线</h3>
       <table><thead><tr><th>时点</th><th>动作</th><th>责任人</th></tr></thead>
