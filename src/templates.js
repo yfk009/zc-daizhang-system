@@ -5,8 +5,8 @@
 
 export const TIERS = {
   S5: { name: 'S5 尊享管家', rule: '一般纳税人 · 年营业额 1000万–3000万', price: 1500, tasks: 18, monthly: '18 项/月 · 编外财务总监', ownerRole: 'lead' },
-  S4: { name: 'S4 经营管家', rule: '一般纳税人 · 年营业额 500万–1000万', price: 750, tasks: 18, monthly: '18 项/月 · 经营管家', ownerRole: 'lead' },
-  S3: { name: 'S3 标准经营', rule: '一般纳税人 · 年营业额 ≤500万', price: 500, tasks: 18, monthly: '18 项/月 · 经营导航员', ownerRole: 'lead' },
+  S4: { name: 'S4 经营管家', rule: '一般纳税人 · 年营业额 500万以上–1000万', price: 750, tasks: 18, monthly: '18 项/月 · 经营管家', ownerRole: 'lead' },
+  S3: { name: 'S3 标准经营', rule: '一般纳税人 · 年营业额 500万以内', price: 500, tasks: 18, monthly: '18 项/月 · 经营导航员', ownerRole: 'lead' },
   S2: { name: 'S2 标准经营', rule: '小规模 · 有实际经营', price: 300, tasks: 18, monthly: '18 项/月 · 贴身账房', ownerRole: 'lead' },
   S1: { name: 'S1 零申报托管', rule: '小规模 · 无经营（零申报）', price: 200, tasks: 4, monthly: '4 项/月（批量） · 零申报闭环', ownerRole: 'assist' },
 };
@@ -17,14 +17,14 @@ export const ROLES = {
 };
 
 // tierOf(client|number)：按 纳税人身份 × 年营业额 × 经营状态 判档
-//   零申报/无经营 → S1；一般纳税人按营业额 <500万→S3 / 500–1000万→S4 / ≥1000万→S5；小规模有经营→S2
+//   零申报/无经营 → S1；一般纳税人按营业额 500万以内→S3 / 500万以上–1000万→S4 / ≥1000万→S5；小规模有经营→S2
 // 兼容旧调用 tierOf(revenue)：仅传数字时视为身份未知，按小规模处理
 export function tierOf(x) {
   const c = (typeof x === 'object' && x !== null) ? x : { revenue: x };
   const rev = Number(c.revenue) || 0;
   if (rev <= 0) return 'S1';
   if (c.taxpayerType === 'general') {
-    if (rev < 5000000) return 'S3';
+    if (rev <= 5000000) return 'S3';
     if (rev < 10000000) return 'S4';
     return 'S5';
   }
@@ -97,15 +97,36 @@ export const EVIDENCE_TYPES = [
   '线下完成，备注说明',
 ];
 
+// 派单解析器：角色映射值支持三种形态
+//   具体人名 = 固定指派 ｜ '__clients' = 谁服务谁做（客户负责人自做/自查） ｜ '__cross' = 谁检谁（按 crossMap 互检表）
+// client 传 null（批量/团队任务）时回落到固定指派人；未配置人名则以角色名占位
+export function resolveOwner(ownersMap = {}, crossMap = {}, role, client) {
+  const v = ownersMap[role];
+  if (v === '__clients') return (client && client.owner) || fixedPerson(ownersMap, role);
+  if (v === '__cross') {
+    const checker = client && client.owner ? crossMap[client.owner] : '';
+    return checker || (client && client.owner) || fixedPerson(ownersMap, role);
+  }
+  if (v && !String(v).startsWith('__')) return v;
+  return fixedPerson(ownersMap, role);
+}
+function fixedPerson(ownersMap = {}, role) {
+  const v = ownersMap[role];
+  if (v && !String(v).startsWith('__')) return v;
+  return ROLES[role] || role;
+}
+
 // 生成某月全部任务（幂等：已有 key 的跳过）
-// customers: 客户数组；ownersMap: {boss,director,lead,reviewer,assist} → 人名
+// customers: 客户数组；ownersMap: {boss,director,lead,reviewer,assist} → 人名或模式值
+// opts.crossMap: 谁检谁互检表 { 被服务会计: 复核人 }
 // opts.disabledKeys: 停用的模板 key（内置或自定义）
 // opts.customTemplates: 自定义模板 [{key,name,week,due,role,tiers,type}]，tiers=['ALL']|档位数组，type∈client|team
 export function buildMonthTasks(month, customers, ownersMap, opts = {}) {
   const disabled = new Set(opts.disabledKeys || []);
   const custom = opts.customTemplates || [];
+  const crossMap = opts.crossMap || {};
   const mm = month.slice(5, 7);
-  const ownerOf = (role) => (ownersMap && ownersMap[role]) || ROLES[role] || role;
+  const ownerOf = (role, client) => resolveOwner(ownersMap, crossMap, role, client);
   const docs = [];
   const mk = (o) => ({ ...o, month, state: 'todo', doneAt: null, note: '' });
   const active = customers.filter(c => !c.archived);
@@ -124,7 +145,7 @@ export function buildMonthTasks(month, customers, ownersMap, opts = {}) {
       _id: `t_${month}_S1_${tpl.key}`, type: 'batch', tier: 'S1',
       clientName: `${TIERS.S1.name}（${s1.length}家）`,
       key: tpl.key, name: tpl.name, week: tpl.week, due: tpl.due,
-      ownerRole: tpl.role, owner: ownerOf(tpl.role),
+      ownerRole: tpl.role, owner: ownerOf(tpl.role, null),
       checklist: s1.map(c => ({ id: c._id, name: c.name, done: false })),
     }));
   }
@@ -140,7 +161,7 @@ export function buildMonthTasks(month, customers, ownersMap, opts = {}) {
         _id: `t_${month}_${c._id}_${tpl.key}`, type: 'client',
         clientId: c._id, clientName: c.name, tier,
         key: tpl.key, name: tpl.name, week: tpl.week, due: tpl.due,
-        ownerRole: tpl.role, owner: ownerOf(tpl.role),
+        ownerRole: tpl.role, owner: ownerOf(tpl.role, c),
       }));
     }
   }
@@ -154,7 +175,7 @@ export function buildMonthTasks(month, customers, ownersMap, opts = {}) {
         _id: `t_${month}_team_${tpl.key}`, type: 'team', tier: 'ALL',
         clientName: `【团队】${tpl.key === 'annual_node' ? '年度专项节点' : '交付复核'}`,
         key: tpl.key, name, week: tpl.week, due: tpl.due,
-        ownerRole: tpl.role, owner: ownerOf(tpl.role),
+        ownerRole: tpl.role, owner: ownerOf(tpl.role, null),
       }));
     }
   }
@@ -162,13 +183,12 @@ export function buildMonthTasks(month, customers, ownersMap, opts = {}) {
   // 自定义模板：逐户型按档位展开，团队型单条
   for (const tpl of custom) {
     if (disabled.has(tpl.key)) continue;
-    const owner = ownerOf(tpl.role);
     if (tpl.type === 'team') {
       docs.push(mk({
         _id: `t_${month}_team_${tpl.key}`, type: 'team', tier: 'ALL',
         clientName: `【团队】${tpl.name}`,
         key: tpl.key, name: tpl.name, week: tpl.week, due: tpl.due,
-        ownerRole: tpl.role, owner,
+        ownerRole: tpl.role, owner: ownerOf(tpl.role, null),
       }));
     } else {
       for (const c of active) {
@@ -178,7 +198,7 @@ export function buildMonthTasks(month, customers, ownersMap, opts = {}) {
             _id: `t_${month}_${c._id}_${tpl.key}`,
             type: 'client', clientId: c._id, clientName: c.name, tier,
             key: tpl.key, name: tpl.name, week: tpl.week, due: tpl.due,
-            ownerRole: tpl.role, owner,
+            ownerRole: tpl.role, owner: ownerOf(tpl.role, c),
           }));
         }
       }

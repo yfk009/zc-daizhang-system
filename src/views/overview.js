@@ -91,6 +91,7 @@ export async function generate() {
   }
   const s = state.settings;
   const docs = buildMonthTasks(state.month, state.customers, s.ownersMap, {
+    crossMap: s.crossMap || {},
     disabledKeys: s.disabledTemplateKeys || [],
     customTemplates: s.customTemplates || [],
   });

@@ -335,7 +335,7 @@ async function autoProcess(root, ctx) {
           revenue: annualRev || 0, annualFee: m.fee || 0, monthlyFee: 0,
           taxpayerType: ttype, tier, tierManual: false, archived: false,
           ownerRole: tier === 'S1' ? 'assist' : 'lead',
-          owner: tier === 'S1' ? (s.ownersMap.assist || '') : (s.ownersMap.lead || ''),
+          owner: (() => { const mv = tier === 'S1' ? s.ownersMap.assist : s.ownersMap.lead; return (mv && !String(mv).startsWith('__')) ? mv : ''; })(),
           contact: '', phone: '', contractStart: '', contractEnd: '',
         };
         await store.upsert('customers', client);

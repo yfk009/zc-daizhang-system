@@ -77,7 +77,12 @@ function openEdit(id, ctx) {
     <label style="margin:8px 0 4px;display:block">月记账费（自动核算 = 年记账费 ÷ 12）</label>
     <input id="cf_monthly" type="number" readonly style="width:100%;background:#f8fafc;color:#475569">
     ${F('contact', '联系人')}${F('phone', '联系电话')}
-    ${F('owner', '负责人（人名）')}
+    <label style="margin:8px 0 4px;display:block">负责人（服务会计，日常任务「谁服务谁做」时按此派单）</label>
+    <select id="cf_owner" style="width:100%">
+      <option value="">（未指定）</option>
+      ${state.settings.staff.map(p => `<option ${c.owner === p.name ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+      ${c.owner && !state.settings.staff.some(p => p.name === c.owner) ? `<option selected>${esc(c.owner)}</option>` : ''}
+    </select>
     ${F('contractStart', '合同开始（YYYY-MM-DD）', 'date')}${F('contractEnd', '合同到期（YYYY-MM-DD）', 'date')}
     <div class="switch"><input type="checkbox" id="cf_arch" ${c.archived ? 'checked' : ''}><span>归档（退出服务，不再生成任务）</span></div>`;
   const syncMonthly = () => {
@@ -106,7 +111,8 @@ async function save() {
     archived: document.getElementById('cf_arch').checked,
   });
   if (!c.tierManual) c.tier = tierOf(c);
-  if (!c.owner) c.owner = c.tier === 'S1' ? (state.settings.ownersMap.assist || '') : (state.settings.ownersMap.lead || '');
+  const omv = c.tier === 'S1' ? state.settings.ownersMap.assist : state.settings.ownersMap.lead;
+  if (!c.owner) c.owner = (omv && !String(omv).startsWith('__')) ? omv : '';
   if (!c.ownerRole) c.ownerRole = c.tier === 'S1' ? 'assist' : 'lead';
   await store.upsert('customers', c);
   await loadAll();

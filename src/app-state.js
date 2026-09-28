@@ -27,6 +27,7 @@ export const DEFAULT_SETTINGS = {
     { key: 'assist', name: '小李', role: '兼职助理', weight: 0.8, boss: false },
   ],
   ownersMap: { boss: '老板', director: '老板', lead: '小王', reviewer: '小王', assist: '小李' },
+  crossMap: {},   // 谁检谁互检表 { 被服务会计: 复核人 }（复核模式选「谁检谁」时生效）
   amoeba: {
     divPct: 30, opsPct: 70, fixedPct: 80, officePct: 20,
     baseSalary: 3000, perfOn: false,

@@ -2,7 +2,7 @@
 import { toast, esc } from '../ui.js';
 import { state, reloadMonth } from '../app-state.js';
 import { store, newId } from '../db.js';
-import { buildMonthTasks, tierOf, unitCount, unitDone, TIERS } from '../templates.js';
+import { buildMonthTasks, tierOf, unitCount, unitDone, TIERS, resolveOwner } from '../templates.js';
 
 export function render(root, ctx) {
   const groups = {};
@@ -120,18 +120,17 @@ async function doAdd(root, ctx) {
   const tiers = [document.querySelector('#kaTiers').value];
   const scope = document.querySelector('#kaScope').value;
   const s = state.settings;
-  const owner = s.ownersMap[role] || (s.staff.find(p => p.key === role) || {}).name || role;
 
   const build = (tpl) => {
     const docs = [];
     if (type === 'team') {
-      docs.push({ _id: `t_${state.month}_team_${tpl.key}`, month: state.month, type: 'team', tier: 'ALL', clientName: `【团队】${name}`, key: tpl.key, name, week: addWeek, due, ownerRole: role, owner, state: 'todo', doneAt: null, note: '' });
+      docs.push({ _id: `t_${state.month}_team_${tpl.key}`, month: state.month, type: 'team', tier: 'ALL', clientName: `【团队】${name}`, key: tpl.key, name, week: addWeek, due, ownerRole: role, owner: resolveOwner(s.ownersMap, s.crossMap || {}, role, null), state: 'todo', doneAt: null, note: '' });
     } else {
       for (const c of state.customers) {
         if (c.archived) continue;
         const tier = c.tier || tierOf(c);
         if (tiers.includes('ALL') || tiers.includes(tier)) {
-          docs.push({ _id: `t_${state.month}_${c._id}_${tpl.key}`, month: state.month, type: 'client', clientId: c._id, clientName: c.name, tier, key: tpl.key, name, week: addWeek, due, ownerRole: role, owner, state: 'todo', doneAt: null, note: '' });
+          docs.push({ _id: `t_${state.month}_${c._id}_${tpl.key}`, month: state.month, type: 'client', clientId: c._id, clientName: c.name, tier, key: tpl.key, name, week: addWeek, due, ownerRole: role, owner: resolveOwner(s.ownersMap, s.crossMap || {}, role, c), state: 'todo', doneAt: null, note: '' });
         }
       }
     }

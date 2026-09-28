@@ -28,12 +28,13 @@ const cnt = pred => SEED.filter(c => pred(c.revenue || 0)).length;
 const tiers = SEED.map(c => tierOf(c));
 eq('S1 家数（营业额=0）', tiers.filter(t => t === 'S1').length, cnt(r => r <= 0));
 eq('S2 家数（小规模有经营）', tiers.filter(t => t === 'S2').length, cnt(r => r > 0 && r <= 1_000_000));
-eq('S3 家数（一般纳税<500万）', tiers.filter(t => t === 'S3').length, cnt(r => r > 1_000_000 && r < 5_000_000));
-eq('S4 家数（500–1000万）', tiers.filter(t => t === 'S4').length, cnt(r => r >= 5_000_000 && r < 10_000_000));
+eq('S3 家数（一般纳税500万以内）', tiers.filter(t => t === 'S3').length, cnt(r => r > 1_000_000 && r <= 5_000_000));
+eq('S4 家数（500万以上–1000万）', tiers.filter(t => t === 'S4').length, cnt(r => r > 5_000_000 && r < 10_000_000));
 eq('S5 家数（≥1000万）', tiers.filter(t => t === 'S5').length, cnt(r => r >= 10_000_000));
 eq('客户总数', SEED.length, 68);
 eq('兼容旧签名 tierOf(数字) 小规模口径', tierOf(500_000), 'S2');
-eq('判档边界 500万 → S4', tierOf({ revenue: 5_000_000, taxpayerType: 'general' }), 'S4');
+eq('判档边界 500万 → S3（以内含本数）', tierOf({ revenue: 5_000_000, taxpayerType: 'general' }), 'S3');
+eq('判档边界 500万零1 → S4', tierOf({ revenue: 5_000_001, taxpayerType: 'general' }), 'S4');
 eq('判档边界 1000万 → S5', tierOf({ revenue: 10_000_000, taxpayerType: 'general' }), 'S5');
 eq('任务库共 22 项（T1–T22）', TASK_LIBRARY.length, 22);
 
@@ -86,6 +87,22 @@ const withDis = buildMonthTasks('2026-09', customers, ownersMap, { customTemplat
 eq('停用自定义模板后不生成', withDis.filter(d => d.key === 'cx_test1').length, 0);
 eq('停用内置模板后不生成', withDis.filter(d => d.key === 'filing').length, 0);
 eq('停用不影响其他任务', withDis.filter(d => d.key === 'taxconfirm').length, paid.length);
+
+// 7) 派单模式：固定人 / 谁服务谁做（__clients）/ 谁检谁（__cross + crossMap）
+import { resolveOwner } from '../src/templates.js';
+eq('固定指派：人名直接返回', resolveOwner({ lead: '小王' }, {}, 'lead', { owner: '张三' }), '小王');
+eq('谁服务谁做：任务派给客户负责人', resolveOwner({ assist: '__clients' }, {}, 'assist', { owner: '会计甲' }), '会计甲');
+eq('谁服务谁做：客户未指定负责人回落角色名', resolveOwner({ assist: '__clients' }, {}, 'assist', null), '会计助理');
+eq('谁检谁：按互检表派给复核人', resolveOwner({ reviewer: '__cross' }, { '会计甲': '会计乙' }, 'reviewer', { owner: '会计甲' }), '会计乙');
+eq('谁检谁：互检表未配置的会计自查兜底', resolveOwner({ reviewer: '__cross' }, {}, 'reviewer', { owner: '会计甲' }), '会计甲');
+const modeClients = buildMonthTasks('2026-09',
+  [{ _id: 'x1', name: '甲公司', tier: 'S2', owner: '会计甲' }, { _id: 'x2', name: '乙公司', tier: 'S2', owner: '会计乙' }],
+  { ...ownersMap, assist: '__clients' });
+eq('生成任务按客户负责人派单（催票）', modeClients.filter(d => d.key === 'urge' && d.owner === '会计甲').length, 1);
+const modeCross = buildMonthTasks('2026-09',
+  [{ _id: 'y1', name: '零申报甲', tier: 'S1', owner: '会计甲' }],
+  { ...ownersMap, reviewer: '__cross' }, { crossMap: { '会计甲': '会计乙' } });
+eq('S1 批量巡检（无单一客户）回落审核会计占位', modeCross.find(d => d.key === 's1_patrol').owner, '审核会计');
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`);
 process.exit(fail ? 1 : 0);

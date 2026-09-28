@@ -3,6 +3,7 @@ import { esc, toast } from '../ui.js';
 import { state, loadAll, reloadMonth, seedCustomers } from '../app-state.js';
 import { store, exportAllLocal, importAllLocal, wipeAll, getUser } from '../db.js';
 import { parseClientTemplate, planClientImport } from '../client-template.js';
+import { resolveOwner } from '../templates.js';
 
 export function render(root, ctx) {
   const s = state.settings;
@@ -19,12 +20,26 @@ export function render(root, ctx) {
         <table class="team-table"><thead><tr><th>姓名</th><th>角色</th><th style="width:52px">权重</th><th style="width:40px">操作</th></tr></thead><tbody id="stTb"></tbody></table>
         <button class="btn ghost sm" id="stAdd" style="margin-top:10px">＋ 添加成员</button>
         <div style="margin-top:14px">
-          <label>日常任务/催票/归档负责（会计助理）：</label><select id="omAssist">${s.staff.map(p=>`<option ${s.ownersMap.assist===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
-          <label>做账/申报/预算负责（主办会计）：</label><select id="omLead">${s.staff.map(p=>`<option ${s.ownersMap.lead===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
-          <label>100% 复核/巡检负责（审核会计）：</label><select id="omReviewer">${s.staff.map(p=>`<option ${s.ownersMap.reviewer===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
+          <label>日常任务/催票/归档（会计助理）：</label><select id="omAssist">
+            <option value="__clients" ${s.ownersMap.assist==='__clients'?'selected':''}>各客户自己的负责人（谁服务谁做）</option>
+            ${s.staff.map(p=>`<option ${s.ownersMap.assist===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}
+          </select>
+          <label>做账/申报/预算（主办会计）：</label><select id="omLead">
+            <option value="__clients" ${s.ownersMap.lead==='__clients'?'selected':''}>各客户自己的负责人（谁服务谁做）</option>
+            ${s.staff.map(p=>`<option ${s.ownersMap.lead===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}
+          </select>
+          <label>100% 复核/巡检（审核会计）：</label><select id="omReviewer">
+            <option value="__cross" ${s.ownersMap.reviewer==='__cross'?'selected':''}>谁检谁（按下方互检表）</option>
+            <option value="__clients" ${s.ownersMap.reviewer==='__clients'?'selected':''}>自己检（客户负责人自查）</option>
+            ${s.staff.map(p=>`<option ${s.ownersMap.reviewer===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}
+          </select>
           <label>经营沟通会/年度复盘（项目负责人）：</label><select id="omDirector">${s.staff.map(p=>`<option ${s.ownersMap.director===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
           <label>终审裁决/抽查（老板）：</label><select id="omBoss">${s.staff.map(p=>`<option ${s.ownersMap.boss===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
-          <p class="muted" style="margin-top:6px">改动后本月已有任务与新生成任务都会同步按新映射指派；个别任务也可在「经营总览」单独改派。</p>
+          <div id="crossWrap" style="margin-top:10px;padding:10px;background:#f8fafc;border-radius:8px;display:${s.ownersMap.reviewer==='__cross'?'block':'none'}">
+            <div style="font-size:13px;font-weight:600;margin-bottom:6px">🔍 谁检谁互检表（左边会计服务客户的复核任务 → 派给右边复核人）</div>
+            ${s.staff.map(p => `<div style="display:flex;align-items:center;gap:8px;margin:4px 0"><span style="width:70px;font-size:13px">${esc(p.name)}</span><span class="muted" style="font-size:12px">服务客户的复核人 →</span><select data-cross="${esc(p.name)}">${s.staff.filter(q => q.name !== p.name).map(q => `<option ${((s.crossMap || {})[p.name] || '')===q.name ? 'selected' : ''}>${esc(q.name)}</option>`).join('')}</select></div>`).join('')}
+          </div>
+          <p class="muted" style="margin-top:6px">改动后本月已有任务与新生成任务都会同步按新模式指派；客户与负责人的对应关系在「客户分层」逐户维护；个别任务也可在「经营总览」单独改派。</p>
         </div>
       </div>
       <div class="panel">
@@ -91,9 +106,16 @@ export function render(root, ctx) {
     const role = id.slice(2).toLowerCase();
     s.ownersMap = { ...s.ownersMap, [role]: e.target.value };
     await store.upsert('settings', s);
-    // 责任人同步：本月已有任务按新映射实时改派
-    const n = await reassignRoleTasks(role, e.target.value);
-    toast(n ? `角色映射已更新，本月 ${n} 条任务已同步给「${e.target.value}」` : '角色映射已更新');
+    if (id === 'omReviewer') root.querySelector('#crossWrap').style.display = e.target.value === '__cross' ? 'block' : 'none';
+    // 责任人同步：本月已有任务按新模式（固定人/谁服务谁做/谁检谁）实时改派
+    const n = await resyncRoleTasks(role);
+    toast(`派单模式已更新，本月 ${n} 条该角色任务已同步重派`);
+  });
+  root.querySelectorAll('[data-cross]').forEach(sel => sel.onchange = async () => {
+    s.crossMap = { ...(s.crossMap || {}), [sel.dataset.cross]: sel.value };
+    await store.upsert('settings', s);
+    const n = await resyncRoleTasks('reviewer');
+    toast(`互检表已保存，本月 ${n} 条复核任务已同步重派`);
   });
   root.querySelectorAll('input[data-ratio]').forEach(i => i.onchange = async () => {
     s.amoeba[i.dataset.ratio] = parseFloat(i.value) || 0;
@@ -118,7 +140,10 @@ export function render(root, ctx) {
       if (!parsed.items.length) { toast('模板中没有可导入的客户行'); return; }
       tplPlan = planClientImport(parsed.items, state.customers);
       const om = s.ownersMap;
-      for (const d of [...tplPlan.creates, ...tplPlan.updates]) d.owner = om[d.ownerRole] || d.owner || '';
+      for (const d of [...tplPlan.creates, ...tplPlan.updates]) {
+        const mv = om[d.ownerRole];
+        d.owner = (mv && !String(mv).startsWith('__')) ? mv : (d.owner || '');
+      }
       drawTplPreview(root, parsed, tplPlan, f.name);
     } catch (err) { console.error(err); toast('文件解析失败：' + err.message); }
   };
@@ -350,12 +375,13 @@ function drawStaff(root, ctx) {
     for (const k of Object.keys(s.ownersMap)) {
       if (s.ownersMap[k] === victim.name) s.ownersMap[k] = target;
     }
-    // 责任人承接：本月所有由被删人负责的任务，自动移交给其角色的新承接人
+    // 责任人承接：本月所有由被删人负责的任务，自动移交给其角色的新承接人（含谁服务谁做/谁检谁模式）
     const tasks = await store.list('monthTasks', { month: state.month });
     let n = 0;
     for (const t of tasks) {
       if (t.owner !== victim.name) continue;
-      t.owner = (t.ownerRole && s.ownersMap[t.ownerRole]) || target;
+      const client = state.customers.find(c => c._id === t.clientId);
+      t.owner = resolveOwner(s.ownersMap, s.crossMap || {}, t.ownerRole, client) || target;
       await store.upsert('monthTasks', t);
       n++;
     }
@@ -366,13 +392,17 @@ function drawStaff(root, ctx) {
   });
 }
 
-// 角色映射变更/删除承接后：把本月该角色的任务改派给新责任人
-async function reassignRoleTasks(role, name) {
+// 模式/映射变更后：把本月该角色的任务按 resolveOwner（固定人/谁服务谁做/谁检谁）重派
+async function resyncRoleTasks(role) {
+  const om = state.settings.ownersMap, cm = state.settings.crossMap || {};
   const tasks = await store.list('monthTasks', { month: state.month });
   let n = 0;
   for (const t of tasks) {
-    if (t.ownerRole === role && t.owner !== name) {
-      t.owner = name;
+    if (t.ownerRole !== role) continue;
+    const client = state.customers.find(c => c._id === t.clientId);
+    const target = resolveOwner(om, cm, role, client);
+    if (target && t.owner !== target) {
+      t.owner = target;
       await store.upsert('monthTasks', t);
       n++;
     }
