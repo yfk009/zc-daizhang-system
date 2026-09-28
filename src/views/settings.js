@@ -1,7 +1,7 @@
 // 设置：团队与角色映射 / 阿米巴参数 / 凭证开关 / 数据备份 / 种子初始化
 import { esc, toast } from '../ui.js';
 import { state, loadAll, reloadMonth, seedCustomers } from '../app-state.js';
-import { store, exportAllLocal, importAllLocal, wipeAll, getUser } from '../db.js';
+import { store, exportAllLocal, importAllLocal, wipeAll, getUser, setUser } from '../db.js';
 import { parseClientTemplate, planClientImport } from '../client-template.js';
 import { resolveOwner } from '../templates.js';
 
@@ -17,7 +17,8 @@ export function render(root, ctx) {
     <div>
       <div class="panel">
         <h3>👥 团队与角色映射</h3>
-        <table class="team-table"><thead><tr><th>姓名</th><th>角色</th><th style="width:52px">权重</th><th style="width:40px">操作</th></tr></thead><tbody id="stTb"></tbody></table>
+        <table class="team-table"><thead><tr><th>姓名</th><th>角色</th><th style="width:52px">权重</th><th style="width:40px">管理</th><th style="width:40px">操作</th></tr></thead><tbody id="stTb"></tbody></table>
+        <p class="muted" style="margin:6px 0 0;font-size:12px">「管理」列勾选谁，谁就是管理员（可进设置；身份切换后生效）。</p>
         <button class="btn ghost sm" id="stAdd" style="margin-top:10px">＋ 添加成员</button>
         <div style="margin-top:14px">
           <label>日常任务/催票/归档（会计助理）：</label><select id="omAssist">
@@ -359,8 +360,18 @@ function drawStaff(root, ctx) {
     <td><input data-si="${i}" data-f="name" value="${esc(p.name)}"></td>
     <td><input data-si="${i}" data-f="role" value="${esc(p.role)}"></td>
     <td><input data-si="${i}" data-f="weight" type="number" step="0.1" value="${p.weight}"></td>
+    <td style="text-align:center"><input type="radio" name="stBoss" data-mk="${i}" ${p.boss ? 'checked' : ''} title="设为管理员"></td>
     <td class="delcell">${s.staff.length > 1 ? `<button class="btn sm danger" data-del="${i}" title="删除此人">删</button>` : '<span class="muted">—</span>'}</td></tr>`).join('');
-  root.querySelectorAll('#stTb input').forEach(inp => inp.onchange = async () => {
+  root.querySelectorAll('[data-mk]').forEach(r => r.onchange = async () => {
+    const i = +r.dataset.mk;
+    s.staff.forEach((p, idx) => p.boss = idx === i);
+    s.ownersMap.boss = s.staff[i].name;
+    await store.upsert('settings', s);
+    const n = await resyncRoleTasks('boss');
+    toast(`「${s.staff[i].name}」已设为管理员${n ? `，本月 ${n} 条老板角色任务同步改派` : ''}`);
+    window.__rerender?.();
+  });
+  root.querySelectorAll('#stTb input[data-si]').forEach(inp => inp.onchange = async () => {
     const p = s.staff[+inp.dataset.si];
     p[inp.dataset.f] = inp.dataset.f === 'weight' ? (parseFloat(inp.value) || 0) : inp.value;
     await store.upsert('settings', s); toast('已保存');
@@ -372,6 +383,13 @@ function drawStaff(root, ctx) {
     const fallback = (s.staff.find(p => p.boss && p !== victim) || s.staff.find(p => p !== victim) || {}).name || '';
     const target = (sameLevel || {}).name || fallback;
     s.staff.splice(+b.dataset.del, 1);
+    // 管理员保护：删掉最后一名 boss 时，自动把首位留任成员升为管理员，避免设置页被锁死
+    let promoted = '';
+    if (s.staff.length && !s.staff.some(p => p.boss)) {
+      s.staff[0].boss = true;
+      promoted = s.staff[0].name;
+      if (!s.ownersMap.boss || !s.staff.some(p => p.name === s.ownersMap.boss)) s.ownersMap.boss = promoted;
+    }
     for (const k of Object.keys(s.ownersMap)) {
       if (s.ownersMap[k] === victim.name) s.ownersMap[k] = target;
     }
@@ -387,8 +405,14 @@ function drawStaff(root, ctx) {
     }
     await store.upsert('settings', s);
     await reloadMonth();
-    toast(`已删除「${victim.name}」${target ? `，角色由「${target}」承接` : ''}${n ? `；本月 ${n} 条任务已自动改派` : ''}`);
-    render(root, ctx);
+    // 当前登录身份就是被删的人时，切到管理员，避免身份悬空
+    const u = getUser();
+    if (!s.staff.some(p => p.name === (u || {}).name)) {
+      const boss = s.staff.find(p => p.boss);
+      if (boss) setUser({ name: boss.name, boss: true });
+    }
+    toast(`已删除「${victim.name}」${target ? `，角色由「${target}」承接` : ''}${n ? `；本月 ${n} 条任务已自动改派` : ''}${promoted ? `；「${promoted}」已自动升为管理员` : ''}`);
+    window.__rerender?.();
   });
 }
 

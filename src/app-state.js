@@ -67,6 +67,7 @@ export async function loadAll() {
     if (state.settings[k] === undefined) state.settings[k] = DEFAULT_SETTINGS[k];
   }
   state.settings.ownersMap = { ...DEFAULT_SETTINGS.ownersMap, ...(state.settings.ownersMap || {}) };
+  await ensureBoss();
   state.customers = await store.list('customers');
   state.tasks = await store.list('monthTasks', { month: state.month });
   state.tax = await store.list('taxConfirm', { month: state.month });
@@ -105,6 +106,28 @@ export async function seedCustomers() {
 }
 
 export function clientById(id) { return state.customers.find(c => c._id === id); }
+
+// 管理员自愈：团队必须至少保留一名 boss（否则设置页永久锁死）；
+// 身份缓存指向已删除成员时，重置为管理员本人
+async function ensureBoss() {
+  const s = state.settings;
+  if (!Array.isArray(s.staff) || !s.staff.length) return;
+  let changed = false;
+  if (!s.staff.some(p => p.boss)) {
+    s.staff[0].boss = true;
+    changed = true;
+  }
+  const boss = s.staff.find(p => p.boss);
+  if (!s.ownersMap.boss || !s.staff.some(p => p.name === s.ownersMap.boss)) {
+    s.ownersMap.boss = boss.name;
+    changed = true;
+  }
+  const u = getUser();
+  if (!u || !s.staff.some(p => p.name === u.name)) {
+    setUser({ name: boss.name, boss: true });
+  }
+  if (changed) await store.upsert('settings', s);
+}
 export function taxOf(clientId) { return state.tax.find(t => t.clientId === clientId && t.month === state.month); }
 export function finOf(clientId, m) { return state.financials.find(f => f.clientId === clientId && f.month === (m || prevDataMonth())); }
 // 服务月 M 处理的是 M-1 的账务数据
