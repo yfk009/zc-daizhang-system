@@ -4,7 +4,7 @@
 import { esc, toast } from '../ui.js';
 import { state, loadAll, prevDataMonth } from '../app-state.js';
 import { store, newId } from '../db.js';
-import { buildMonthTasks, tierOf } from '../templates.js';
+import { buildMonthTasks, inferTier } from '../templates.js';
 import {
   detectHeaderRow, detectMode, guessColumns, matchClient,
   parseNumber, parsePastedText, extractClientFinancials, aggregateRows,
@@ -324,18 +324,20 @@ async function autoProcess(root, ctx) {
       let client = m.clientId ? state.customers.find(c => c._id === m.clientId) : null;
       if (client) { matchedCnt++; }
       else {
+        // 统一判档（与名单模板导入同引擎）：营业额>0 → 按营业额；否则记账费带 → 有税金按 S2 → 默认 S1
         let annualRev = m.annualRev ?? null;
-        let tier, ttype;
-        if (annualRev != null) { ttype = annualRev >= 5000000 ? 'general' : 'small'; tier = tierOf({ revenue: annualRev, taxpayerType: ttype }); }
-        else if (m.revenue) { annualRev = Math.round(m.revenue * 12); ttype = annualRev >= 5000000 ? 'general' : 'small'; tier = tierOf({ revenue: annualRev, taxpayerType: ttype }); }
-        else if (m.taxTotal) { ttype = 'small'; tier = 'S2'; }
-        else { annualRev = 0; ttype = 'small'; tier = 'S1'; }
+        if (annualRev == null && m.revenue) annualRev = Math.round(m.revenue * 12);
+        const judged = inferTier({
+          revenue: annualRev || 0,
+          annualFee: m.fee || 0,
+          hasBusiness: !!(m.taxTotal && m.taxTotal > 0),
+        });
         client = {
           _id: newId('c'), name: m.name, taxNo: '', source: '表格导入',
           revenue: annualRev || 0, annualFee: m.fee || 0, monthlyFee: 0,
-          taxpayerType: ttype, tier, tierManual: false, archived: false,
-          ownerRole: tier === 'S1' ? 'assist' : 'lead',
-          owner: (() => { const mv = tier === 'S1' ? s.ownersMap.assist : s.ownersMap.lead; return (mv && !String(mv).startsWith('__')) ? mv : ''; })(),
+          taxpayerType: judged.taxpayerType, tier: judged.tier, tierReason: judged.reason, tierManual: false, archived: false,
+          ownerRole: judged.tier === 'S1' ? 'assist' : 'lead',
+          owner: (() => { const mv = judged.tier === 'S1' ? s.ownersMap.assist : s.ownersMap.lead; return (mv && !String(mv).startsWith('__')) ? mv : ''; })(),
           contact: '', phone: '', contractStart: '', contractEnd: '',
         };
         await store.upsert('customers', client);
@@ -371,12 +373,13 @@ async function autoProcess(root, ctx) {
   if (docs.length) await store.upsertMany('monthTasks', docs);
   await loadAll();
 
-  const tierDist = { S3: 0, S2: 0, S1: 0 };
-  created.forEach(c => tierDist[c.tier]++);
+  const tierDist = { S1: 0, S2: 0, S3: 0, S4: 0, S5: 0 };
+  created.forEach(c => { tierDist[c.tier] = (tierDist[c.tier] || 0) + 1; });
+  const tierTxt = ['S1', 'S2', 'S3', 'S4', 'S5'].filter(t => tierDist[t]).map(t => `${t}×${tierDist[t]}`).join(' ');
   lastPipeline = {
     text:
       `覆盖 ${wbData.sheetNames.length} 张表（单户另存 ${bSaved} 张${skippedB ? '，跳过未识别 ' + skippedB + ' 张' : ''}）｜` +
-      `建档 <b>${created.length}</b> 家（S3×${tierDist.S3} S2×${tierDist.S2} S1×${tierDist.S1}）｜匹配既有 <b>${matchedCnt}</b> 家 ｜ ` +
+      `建档 <b>${created.length}</b> 家（${tierTxt || '无'}）｜匹配既有 <b>${matchedCnt}</b> 家 ｜ ` +
       `财务落库 <b>${finDocs.length}</b> 条（${dataMonth}）｜ 税金预填 <b>${taxDocs.length}</b> 户（${state.month}）｜ ` +
       `月度任务 <b>${docs.length ? '新生成 ' + docs.length + ' 项' : '已存在'}</b>`,
   };

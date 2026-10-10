@@ -3,7 +3,7 @@ import { esc, toast } from '../ui.js';
 import { state, loadAll, reloadMonth, seedCustomers } from '../app-state.js';
 import { store, exportAllLocal, importAllLocal, wipeAll, getUser, setUser } from '../db.js';
 import { parseClientTemplate, planClientImport } from '../client-template.js';
-import { resolveOwner } from '../templates.js';
+import { resolveOwner, TIERS } from '../templates.js';
 
 export function render(root, ctx) {
   const s = state.settings;
@@ -62,7 +62,7 @@ export function render(root, ctx) {
           <span class="st" id="tplState">客户库：${state.customers.length} 家</span>
         </div>
         <div id="tplPreview" style="display:none;margin-top:12px"></div>
-        <p class="muted" style="margin-top:10px">配合「ZC-客户信息导入模板.xlsx」使用：按 纳税人识别号→公司名称 匹配，已有客户更新、新客户自动建档；示例/合计/空行自动跳过；月记账费=年÷12；分级按本期营业额快照每月判一次（手动锁档的客户不重划）；负责人按分级自动指派。</p>
+        <p class="muted" style="margin-top:10px">配合「ZC-客户信息导入模板.xlsx」使用：按 纳税人识别号→公司名称 匹配，已有客户更新、新客户自动建档；示例/合计/空行自动跳过；月记账费=年÷12。分级自动判档：纳税人身份列（如有：一般纳税人/小规模/零申报）→ 年营业额 → 记账费档位 → 默认零申报托管；预览中可逐行改档，手动锁档的客户不重划；负责人按分级自动指派。</p>
       </div>
       <div class="panel">
         <h3>💾 数据管理</h3>
@@ -155,19 +155,27 @@ export function render(root, ctx) {
     const cutTxt = parsed.cutoff ? `本期营业额截止 ${parsed.cutoff} ｜ ` : '';
     st.textContent = `已解析：${fileName}`;
     st.className = 'st todo';
-    const head = `<p style="font-size:13px"><b>${cutTxt}共 ${parsed.items.length} 行</b> → <span style="color:#15803d">新增 ${plan.creates.length}</span> · <span style="color:#1d4ed8">更新 ${plan.updates.length}</span>${skipTxt}</p>`;
+    // 档位分布（预览即所见）：全 S1 之类的异常一眼可见
+    const dist = {};
+    for (const d of [...plan.creates, ...plan.updates]) dist[d.tier] = (dist[d.tier] || 0) + 1;
+    const distTxt = ['S1', 'S2', 'S3', 'S4', 'S5'].filter(t => dist[t]).map(t => `${t}×${dist[t]}`).join(' ');
+    const autoCnt = [...plan.creates, ...plan.updates].filter(d => d.tierReason && d.tierReason !== '手动锁档').length;
+    const head = `<p style="font-size:13px"><b>${cutTxt}共 ${parsed.items.length} 行</b> → <span style="color:#15803d">新增 ${plan.creates.length}</span> · <span style="color:#1d4ed8">更新 ${plan.updates.length}</span>${skipTxt} ｜ 档位分布：<b>${distTxt || '—'}</b></p>
+      <p class="muted" style="margin-top:2px">判档依据：纳税人身份列（如有）→ 年营业额 → 记账费档位 → 默认零申报托管；${autoCnt} 户为自动判档，可在下表逐行改档（改后按新档锁档）。</p>`;
     const maxShow = 15;
     const shown = plan.rows.slice(0, maxShow);
-    const tbl = `<table style="margin-top:8px"><thead><tr><th>行</th><th>公司名称</th><th>匹配</th><th>年记账费</th><th>月费</th><th>营业额</th><th>分级</th><th>有效期止</th></tr></thead><tbody>${
+    const tierOpts = cur => ['S1', 'S2', 'S3', 'S4', 'S5'].map(t => `<option value="${t}" ${t === cur ? 'selected' : ''}>${t} · ${TIERS[t].name}</option>`).join('');
+    const tbl = `<table style="margin-top:8px"><thead><tr><th>行</th><th>公司名称</th><th>匹配</th><th>年记账费</th><th>月费</th><th>营业额</th><th>分级（可改）</th><th>有效期止</th></tr></thead><tbody>${
       shown.map(r => `<tr>
         <td>${r.row}</td><td>${esc(r.name)}</td>
         <td>${r.action === 'create' ? '<span class="tag S1" style="background:#15803d;color:#fff">新增</span>' : '更新·' + r.via}</td>
         <td style="text-align:right">${r.annualFee ?? ''}</td>
         <td style="text-align:right">${r.monthFee ?? ''}</td>
         <td style="text-align:right">${r.revenue ?? ''}</td>
-        <td><span class="tag ${r.tier}">${r.tier}</span></td>
+        <td><select class="tplTier" data-key="${esc(r.key || '')}" style="min-width:110px">${tierOpts(r.tier)}</select>
+          <div class="muted" style="font-size:11px">${esc(r.reason || '')}</div></td>
         <td>${r.end || ''}</td></tr>`).join('')
-    }${plan.rows.length > maxShow ? `<tr><td colspan="8" class="muted">…其余 ${plan.rows.length - maxShow} 行不再显示，导入时全部生效</td></tr>` : ''}</tbody></table>`;
+    }${plan.rows.length > maxShow ? `<tr><td colspan="8" class="muted">…其余 ${plan.rows.length - maxShow} 行不再显示，导入时全部生效；如需调整请先导入，再到「客户分层」逐户改档</td></tr>` : ''}</tbody></table>`;
     const warn = (plan.warnings.length || parsed.skipped.length)
       ? `<p class="muted" style="margin-top:6px">${[...plan.warnings, ...parsed.skipped.map(k => `第 ${k.row} 行（${k.name || '空'}）${k.reason}`)].map(x => '· ' + esc(x)).join('<br>')}</p>` : '';
     prev.innerHTML = `${head}${tbl}${warn}
@@ -176,6 +184,20 @@ export function render(root, ctx) {
         <span class="muted" style="font-size:12px">导入后分级/负责人/月费立即生效，当月任务下次生成时按新名单出</span>
       </div>`;
     prev.style.display = '';
+    // 逐行改档：更新计划文档（档位/锁档/身份/负责人），与确认导入所见一致
+    prev.querySelectorAll('.tplTier').forEach(sel => sel.onchange = () => {
+      const doc = [...plan.creates, ...plan.updates].find(d => d._id === sel.dataset.key);
+      if (!doc) return;
+      const t = sel.value;
+      doc.tier = t;
+      doc.tierManual = true;
+      doc.tierReason = '手动指定';
+      doc.taxpayerType = (t === 'S3' || t === 'S4' || t === 'S5') ? 'general' : 'small';
+      doc.ownerRole = t === 'S1' ? 'assist' : 'lead';
+      const mv = s.ownersMap[doc.ownerRole];
+      if (mv && !String(mv).startsWith('__')) doc.owner = mv;
+      drawTplPreview(rootEl, parsed, plan, fileName);
+    });
     prev.querySelector('#tplConfirm').onclick = async () => {
       const btn = prev.querySelector('#tplConfirm');
       btn.disabled = true;

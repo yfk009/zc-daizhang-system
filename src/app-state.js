@@ -1,6 +1,6 @@
 // 应用状态中枢：月份、数据缓存、设置
 import { store, getUser, setUser } from './db.js';
-import { tierOf } from './templates.js';
+import { tierOf, inferTier } from './templates.js';
 import { monthNow } from './ui.js';
 import { SEED_CUSTOMERS } from './seed-data.js';
 
@@ -48,7 +48,10 @@ async function migrateV2() {
     // 旧 S3（营业额>100万深度户）默认按一般纳税人处理，其余默认小规模；客户页可改
     if (!c.taxpayerType) c.taxpayerType = c.tier === 'S3' ? 'general' : 'small';
     if (!c.tierManual) {
-      c.tier = tierOf({ revenue: c.revenue, taxpayerType: c.taxpayerType });
+      // 统一重判引擎：身份>营业额>记账费>默认，避免空营业额客户被误归 S1
+      const judged = inferTier(c);
+      c.tier = judged.tier;
+      c.taxpayerType = judged.taxpayerType;
     }
     if (JSON.stringify([c.tier, c.taxpayerType]) !== before) {
       await store.upsert('customers', c);

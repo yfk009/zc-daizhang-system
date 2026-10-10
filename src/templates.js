@@ -31,6 +31,49 @@ export function tierOf(x) {
   return 'S2';
 }
 
+// 导入/重判档引擎 inferTier：tierOf 之上补两级信号，解决「营业额列空 → 全员 S1」
+// 优先级：身份文本(零申报/一般纳税人/小规模) → 营业额>0 → 记账费就近新价 → 默认 S1 零申报托管
+// 记账费映射：按五档一口价（200/300/500/750/1500）就近归档（旧收费档位与新五档服务强度对应），并列取低档
+// 返回 { tier, taxpayerType, reason }；判为 S3–S5 时同步 general 身份，保证后续重判/出任务口径一致
+const FEE_TIERS = [[200, 'S1'], [300, 'S2'], [500, 'S3'], [750, 'S4'], [1500, 'S5']];
+export function parseIdentityText(t) {
+  const s = String(t || '');
+  if (/零申报|无经营|未经营|停营/.test(s)) return 'zero';
+  if (/一般纳税人|一般计税/.test(s)) return 'general';
+  if (/小规模/.test(s)) return 'small';
+  return '';
+}
+export function inferTier(c = {}) {
+  const rev = Number(c.revenue) || 0;
+  const idText = parseIdentityText(c.identityText);
+  const mf = Number(c.monthlyFee) > 0 ? Number(c.monthlyFee)
+    : (Number(c.annualFee) > 0 ? Math.round(Number(c.annualFee) / 12 * 100) / 100 : 0);
+  const byFee = () => {
+    let best = FEE_TIERS[0];
+    for (const ft of FEE_TIERS) {
+      if (Math.abs(mf - ft[0]) < Math.abs(mf - best[0])) best = ft; // 严格小于 → 并列取低档
+    }
+    return { tier: best[1], price: best[0], taxpayerType: best[1] === 'S1' || best[1] === 'S2' ? 'small' : 'general' };
+  };
+  if (rev > 0) {
+    const ttype = idText === 'general' ? 'general' : (idText === 'small' ? 'small' : (rev >= 5000000 ? 'general' : 'small'));
+    return { tier: tierOf({ revenue: rev, taxpayerType: ttype }), taxpayerType: ttype, reason: `按年营业额 ${rev >= 10000 ? Math.round(rev / 10000) + '万' : rev} 元` };
+  }
+  if (idText === 'zero') return { tier: 'S1', taxpayerType: 'small', reason: '按身份：零申报/无经营' };
+  if (idText === 'small') return { tier: 'S2', taxpayerType: 'small', reason: '按身份：小规模' };
+  if (idText === 'general' || c.taxpayerType === 'general') {
+    const f = byFee();
+    const tier = ['S4', 'S5'].includes(f.tier) ? f.tier : 'S3'; // 一般纳税最低 S3
+    return { tier, taxpayerType: 'general', reason: mf > 0 ? '按身份：一般纳税人·按记账费归档' : '按身份：一般纳税人（默认 S3）' };
+  }
+  if (mf > 0) {
+    const f = byFee();
+    return { tier: f.tier, taxpayerType: f.taxpayerType, reason: `按记账费 ¥${mf}/月 就近归档（接近新价 ¥${f.price}/月）` };
+  }
+  if (c.hasBusiness) return { tier: 'S2', taxpayerType: 'small', reason: '有经营（有税金）默认 S2' };
+  return { tier: 'S1', taxpayerType: 'small', reason: '无营业额无记账费，默认零申报托管' };
+}
+
 // T1–T22 任务库（key 全局唯一，生成幂等靠它）
 // 周期 cycle：缺省=每月；'quarterly'=3/6/9/12月；'june'=每年6月；'december'=每年12月
 // type：'client' 每客户一条 ｜ 'batch' 全组一条（含客户清单打勾）

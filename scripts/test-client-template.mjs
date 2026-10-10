@@ -1,5 +1,6 @@
 // 客户名单模板解析引擎测试：node scripts/test-client-template.mjs
 import { locateTemplateHeader, mapTemplateColumns, normDate, normTax, parseClientTemplate, planClientImport } from '../src/client-template.js';
+import { inferTier } from '../src/templates.js';
 
 let pass = 0, fail = 0;
 function ok(cond, label) {
@@ -107,6 +108,48 @@ ok(rmPlanOver.updates[0].remark === '7月已催票', '模板备注非空 → 覆
 console.log('== 异常防护 ==');
 ok(parseClientTemplate([['随便一个表'], [1, 2, 3]]).ok === false, '无表头表报错');
 ok(planClientImport([], library).creates.length === 0, '空数据不产生动作');
+
+console.log('== 五档自动判档 inferTier（身份列 > 营业额 > 记账费带 > 默认 S1）==');
+ok(inferTier({ revenue: 0, annualFee: 8000 }).tier === 'S4' && inferTier({ revenue: 0, annualFee: 8000 }).taxpayerType === 'general', '空营业额+年费8000（667/月）就近→S4·一般纳税');
+ok(inferTier({ revenue: 0, annualFee: 2000 }).tier === 'S1', '空营业额+年费2000（167/月）→S1 托管档');
+ok(inferTier({ revenue: 0, annualFee: 4000 }).tier === 'S2', '空营业额+年费4000（333/月）→S2');
+ok(inferTier({ revenue: 0, annualFee: 9000 }).tier === 'S4', '空营业额+年费9000（750/月）→S4');
+ok(inferTier({ revenue: 0, annualFee: 18000 }).tier === 'S5', '空营业额+年费18000（1500/月）→S5');
+const dft = inferTier({ revenue: 0, annualFee: 0 });
+ok(dft.tier === 'S1' && /零申报/.test(dft.reason), '空营业额+无费 → 默认 S1 零申报托管');
+ok(inferTier({ revenue: 0, annualFee: 2000, identityText: '一般纳税人' }).tier === 'S3' && inferTier({ revenue: 0, annualFee: 2000, identityText: '一般纳税人' }).reason.includes('一般纳税人'), '身份列=一般纳税人 → 最低 S3（不受低费拉低）');
+ok(inferTier({ revenue: 0, identityText: '小规模' }).tier === 'S2', '身份列=小规模 → S2');
+ok(inferTier({ revenue: 0, identityText: '零申报' }).tier === 'S1', '身份列=零申报 → S1');
+ok(inferTier({ revenue: 6000000, annualFee: 0 }).tier === 'S4', '营业额600万 → S4');
+ok(inferTier({ revenue: 5000000, annualFee: 0 }).tier === 'S3', '营业额500万（含本数）→ S3');
+ok(inferTier({ revenue: 12000000, annualFee: 0 }).tier === 'S5', '营业额1200万 → S5');
+ok(inferTier({ revenue: 3000000, annualFee: 0 }).tier === 'S2', '营业额300万无身份列 → 推定小规模 S2（现行口径）');
+ok(inferTier({ revenue: 0, annualFee: 2400, taxpayerType: 'general' }).tier === 'S3', '在库一般纳税户+空营业额 → 不再误坠 S1');
+
+console.log('== 名单导入识别「纳税人身份」列 ==');
+const idRows = [
+  ['纳税人识别号', '公司名称*', '年记账费（元/年）*', '客户营业额（截至月末，元）', '纳税人身份', '备注'],
+  ['91530100ID000001', '身份测试一般纳税公司', 8000, '', '一般纳税人', ''],
+  ['91530100ID000002', '身份测试零申报公司', 1500, '', '零申报', ''],
+];
+const idParsed = parseClientTemplate(idRows);
+ok(idParsed.items.length === 2 && idParsed.items[0].identityText === '一般纳税人', '身份列取数');
+const idPlan = planClientImport(idParsed.items, []);
+ok(['S3','S4'].includes(idPlan.creates[0].tier) && idPlan.creates[0].taxpayerType === 'general', '身份列一般纳税+空营业额 → S3+（按费就近，最低 S3）');
+ok(idPlan.creates[1].tier === 'S1', '身份列零申报 → S1');
+ok(idPlan.rows[0].reason && idPlan.rows[0].key, '预览行带判档依据与关联key');
+// 用户真实场景回归：99 户营业额全空 → 不再全员 S1，按记账费分层
+const feeRows = [
+  ['纳税人识别号', '公司名称*', '年记账费（元/年）*', '客户营业额（截至月末，元）'],
+  ['91530100FEE000001', '费档甲公司', 8000, ''],
+  ['91530100FEE000002', '费档乙公司', 2000, ''],
+  ['91530100FEE000003', '费档丙公司', 4000, ''],
+  ['91530100FEE000004', '费档丁公司', '', ''],
+];
+const feePlan = planClientImport(parseClientTemplate(feeRows).items, []);
+const fd = {};
+feePlan.creates.forEach(c => fd[c.tier] = (fd[c.tier] || 0) + 1);
+ok(fd.S4 === 1 && fd.S1 === 2 && fd.S2 === 1, '空营业额混合费档 → S1×2/S2×1/S4×1（不再全员 S1）');
 
 console.log('\n结果：' + pass + ' 通过 / ' + fail + ' 失败');
 process.exit(fail ? 1 : 0);

@@ -2,7 +2,7 @@
 import { esc, toast } from '../ui.js';
 import { state, loadAll } from '../app-state.js';
 import { store, newId } from '../db.js';
-import { tierOf, TIERS, TIER_ORDER } from '../templates.js';
+import { inferTier, TIERS, TIER_ORDER } from '../templates.js';
 
 let curTier = '';
 let q = '';
@@ -39,7 +39,7 @@ export function render(root, ctx) {
       <td>${esc(c.owner || '')}</td><td>${c.contractEnd || '—'}</td>
       <td><button class="btn sm ghost" data-edit="${c._id}">编辑</button></td></tr>`;
     }).join('')}</tbody></table>
-    <div class="muted" style="margin-top:8px">档位规则（4.0 五档）：零申报→S1 托管；小规模有经营→S2；一般纳税人按年营业额 ≤500万→S3、500–1000万→S4、1000–3000万→S5，一口价无折扣。每年 1 月按上年营业额统一重划，个案可手动调档（标"手"）；调档后下月任务按新档生成。</div>
+    <div class="muted" style="margin-top:8px">档位规则（4.0 五档）：零申报→S1 托管；小规模有经营→S2；一般纳税人按年营业额 ≤500万→S3、500–1000万→S4、1000–3000万→S5，一口价无折扣。营业额缺失时按 纳税人身份→记账费档位→默认零申报 自动判档。每年 1 月按上年营业额统一重划，个案可手动调档（标"手"）；调档后下月任务按新档生成。</div>
   </div>
   <div class="modal-mask" id="cMask"><div class="modal">
     <h3 id="cTitle">编辑客户</h3><div id="cForm"></div>
@@ -110,7 +110,13 @@ async function save() {
     contractStart: v('contractStart'), contractEnd: v('contractEnd'),
     archived: document.getElementById('cf_arch').checked,
   });
-  if (!c.tierManual) c.tier = tierOf(c);
+  if (!c.tierManual) {
+    // 未锁档重判走统一引擎（身份>营业额>记账费>默认），避免空营业额客户被 tierOf 打回 S1
+    const judged = inferTier(c);
+    c.tier = judged.tier;
+    c.taxpayerType = judged.taxpayerType;
+    c.tierReason = judged.reason;
+  }
   const omv = c.tier === 'S1' ? state.settings.ownersMap.assist : state.settings.ownersMap.lead;
   if (!c.owner) c.owner = (omv && !String(omv).startsWith('__')) ? omv : '';
   if (!c.ownerRole) c.ownerRole = c.tier === 'S1' ? 'assist' : 'lead';

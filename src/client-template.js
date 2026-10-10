@@ -1,7 +1,7 @@
 // 客户名单模板解析引擎：适配「ZC-客户信息导入模板.xlsx」v2（列序对齐股改明细表）
 // 能力：表头定位 / 列名映射（兼容旧表头）/ 日期归一（2026-09-01、20260901、Excel序列号）/ 示例·合计行剔除 / 税号→名称匹配建档
 // 纯函数模块，无 DOM 依赖，可在 Node 中测试
-import { tierOf } from './templates.js';
+import { inferTier } from './templates.js';
 import { parseNumber, normName, matchClient } from './smart-import.js';
 
 const cellText = v => String(v ?? '').replace(/\r/g, '').trim();
@@ -68,6 +68,7 @@ const COL_RULES = [
   ['annualFee', /年记账费|记账费|年费/],
   ['source', /客户来源|来源|渠道/],
   ['revenue', /营业额|产值|销售额/],
+  ['identity', /纳税人身份|增值税身份|纳税人类型|身份/], // 可选列：一般纳税人/小规模/零申报
   ['cycle', /收费周期|收费方式|收费频次/],
   ['contact', /^联系人$|^联系人姓名$/],
   ['phone', /联系电话|电话|手机/],
@@ -138,6 +139,7 @@ export function parseClientTemplate(rows) {
       annualFee, monthFee: monthFeeRaw,
       source: cellText(g('source', cells)),
       revenue: parseNumber(g('revenue', cells)),
+      identityText: cellText(g('identity', cells)),
       cycle: cellText(g('cycle', cells)),
       contact: cellText(g('contact', cells)),
       phone: typeof g('phone', cells) === 'number' ? String(Math.round(g('phone', cells))) : cellText(g('phone', cells)),
@@ -178,12 +180,12 @@ export function planClientImport(items, customers) {
       const doc = buildDoc(it, target);
       if (target.archived) { doc.archived = false; warnings.push('「' + it.name + '」匹配到已归档客户，将同时恢复为在库'); }
       updates.push(doc);
-      rows.push(previewRow(it, { action: 'update', via, tier: doc.tier, monthFee: doc.monthlyFee }));
+      rows.push(previewRow(it, { action: 'update', via, key: doc._id, tier: doc.tier, reason: doc.tierReason, monthFee: doc.monthlyFee }));
     } else {
       seq += 1;
       const doc = buildDoc(it, null, 'c_' + String(seq).padStart(3, '0'));
       creates.push(doc);
-      rows.push(previewRow(it, { action: 'create', tier: doc.tier, monthFee: doc.monthlyFee }));
+      rows.push(previewRow(it, { action: 'create', key: doc._id, tier: doc.tier, reason: doc.tierReason, monthFee: doc.monthlyFee }));
     }
   }
   return { creates, updates, rows, warnings };
@@ -195,9 +197,20 @@ function buildDoc(it, prev, newId) {
     : (prev ? (prev.annualFee ?? 0) : 0));
   const revenue = it.revenue != null ? it.revenue : (prev ? (prev.revenue ?? 0) : 0);
   const tierManual = prev ? prev.tierManual === true : false; // 手动锁档客户不重划
-  // 五档口径（4.0）：身份未知的新客户按营业额启发式推定（≥500万视为一般纳税人）
-  const taxpayerType = prev && prev.taxpayerType ? prev.taxpayerType : (revenue >= 5000000 ? 'general' : 'small');
-  const tier = tierManual && prev ? (prev.tier || tierOf({ revenue, taxpayerType })) : tierOf({ revenue, taxpayerType });
+  // 五档判档（4.0）：统一走 inferTier——身份列文本 > 营业额 > 记账费带 > 默认 S1；
+  // 更新在库客户时保留其已有身份（模板身份列优先），避免历史判断被反复翻转
+  const eff = {
+    revenue,
+    annualFee,
+    monthlyFee: null,
+    identityText: it.identityText || '',
+    taxpayerType: (it.identityText || '') ? '' : (prev ? prev.taxpayerType || '' : ''),
+    hasBusiness: false,
+  };
+  const judged = inferTier(eff);
+  const tier = tierManual && prev ? (prev.tier || judged.tier) : judged.tier;
+  const taxpayerType = tierManual && prev ? (prev.taxpayerType || judged.taxpayerType) : judged.taxpayerType;
+  const tierReason = tierManual && prev ? '手动锁档' : judged.reason;
   const ownerRole = tier === 'S1' ? 'assist' : 'lead';
   return {
     ...(prev || {}),
@@ -215,7 +228,7 @@ function buildDoc(it, prev, newId) {
     contractAmount: it.contractAmount != null ? it.contractAmount : (prev ? (prev.contractAmount ?? 0) : 0),
     commission: it.commission != null ? it.commission : (prev ? (prev.commission ?? 0) : 0),
     payCycle: it.cycle || (prev ? prev.payCycle || '' : ''),
-    tier, tierManual, ownerRole,
+    tier, tierManual, tierReason, ownerRole,
     archived: prev ? !!prev.archived : false,
   };
 }
