@@ -112,7 +112,7 @@ export async function render(root, ctx) {
     const o = state.serviceOrders.find(x => x._id === b.dataset.print);
     showPrint(`
       <h2 style="text-align:center;margin:10px 0 4px">服务确认单</h2>
-      <p style="text-align:center;color:#64748b;font-size:12px">昆明掌兴代理记账有限公司 ｜ 先确认、后服务、不留隐性收费</p>
+      <p style="text-align:center;color:#64748b;font-size:12px">昆明辫子哥代理记账有限公司 ｜ 先确认、后服务、不留隐性收费</p>
       <table style="margin-top:14px">
         <tr><td style="width:26%"><b>客户名称</b></td><td>${esc(o.clientName)}</td></tr>
         <tr><td><b>服务项目</b></td><td>${esc(o.svc)}</td></tr>
@@ -129,7 +129,7 @@ export async function render(root, ctx) {
     const clients = state.customers.filter(c => !c.archived);
     showPrint(`
       <h2 style="text-align:center;margin:10px 0 4px">代账服务报价单</h2>
-      <p style="text-align:center;color:#64748b;font-size:12px">昆明掌兴代理记账有限公司 · 代账 4.0 主动服务体系 ｜ 全国统一一口价 · 无折扣 · 无隐藏收费</p>
+      <p style="text-align:center;color:#64748b;font-size:12px">昆明辫子哥代理记账有限公司 · 代账 4.0 主动服务体系 ｜ 全国统一一口价 · 无折扣 · 无隐藏收费</p>
       <table style="margin-top:14px">
         <thead><tr><th>客户分类</th><th>适合谁</th><th>月费</th><th>年费（=月费×12）</th><th>服务内容</th></tr></thead>
         <tbody>${QUOTE_TIERS.map(t => `<tr><td><b>${t.name}</b></td><td>${t.who}</td><td><b>${t.price} 元/月</b></td><td>${t.price * 12} 元/年</td><td class="muted">${t.tasks}</td></tr>`).join('')}</tbody>

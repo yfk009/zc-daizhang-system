@@ -461,7 +461,7 @@ function exportBackup() {
   const data = exportAllLocal();
   const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
   const a = document.createElement('a');
-  a.download = `掌兴系统备份_${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `辫子哥系统备份_${new Date().toISOString().slice(0, 10)}.json`;
   a.href = URL.createObjectURL(blob);
   a.click();
   toast('备份已导出，请妥善保存');
