@@ -47,7 +47,13 @@ function lsKey(coll) { return 'zx_' + coll; }
 function lsRead(coll) {
   try { return JSON.parse(localStorage.getItem(lsKey(coll)) || '[]'); } catch { return []; }
 }
-function lsWrite(coll, arr) { localStorage.setItem(lsKey(coll), JSON.stringify(arr)); }
+function lsWrite(coll, arr) {
+  localStorage.setItem(lsKey(coll), JSON.stringify(arr));
+  notifyDirty(); // 云端同步层监听：防抖整包上推
+}
+function notifyDirty() {
+  try { window.dispatchEvent(new CustomEvent('zx:dirty')); } catch { /* 非浏览器环境 */ }
+}
 export function newId(prefix) {
   const uid = (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + performance.now().toString(36));
   return (prefix ? prefix + '_' : '') + uid.replace(/-/g, '').slice(0, 20);
@@ -134,4 +140,5 @@ export async function wipeAll() {
     }
   }
   localStorage.setItem('zx_seed_done', '1');
+  notifyDirty(); // 云端模式同步空包（服务器历史里仍留有清空前 10 份版本可恢复）
 }

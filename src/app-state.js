@@ -1,5 +1,6 @@
 // 应用状态中枢：月份、数据缓存、设置
 import { store, getUser, setUser } from './db.js';
+import { isServerMode } from './api.js';
 import { tierOf, inferTier } from './templates.js';
 import { monthNow } from './ui.js';
 import { SEED_CUSTOMERS } from './seed-data.js';
@@ -124,6 +125,11 @@ async function ensureBoss() {
   if (!s.ownersMap.boss || !s.staff.some(p => p.name === s.ownersMap.boss)) {
     s.ownersMap.boss = boss.name;
     changed = true;
+  }
+  // 云端账号模式：身份由服务器登录态决定，不做本地成员名重置（团队名单来自各人同步包）
+  if (isServerMode()) {
+    if (changed) await store.upsert('settings', s);
+    return;
   }
   const u = getUser();
   if (!u || !s.staff.some(p => p.name === u.name)) {

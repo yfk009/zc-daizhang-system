@@ -2,12 +2,14 @@
 import { esc, toast } from '../ui.js';
 import { state, loadAll, reloadMonth, seedCustomers } from '../app-state.js';
 import { store, exportAllLocal, importAllLocal, wipeAll, getUser, setUser } from '../db.js';
+import { isServerMode, serverAiReady, getHealth, aiChat, archiveBackup } from '../api.js';
 import { parseClientTemplate, planClientImport } from '../client-template.js';
 import { resolveOwner, TIERS } from '../templates.js';
 
 export function render(root, ctx) {
   const s = state.settings;
   const isBoss = (getUser() || {}).boss;
+  const svr = isServerMode();
   if (!isBoss) {
     root.innerHTML = `<div class="panel"><h3>⚙️ 设置</h3><p class="muted">设置仅老板可修改。当前身份：${esc((getUser() || {}).name || '未选择')}</p></div>`;
     return;
@@ -69,11 +71,24 @@ export function render(root, ctx) {
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <button class="btn ghost" id="btnExp">📤 导出全量备份（JSON）</button>
           <label class="btn ghost" style="cursor:pointer">📥 导入备份<input type="file" id="btnImp" accept=".json" style="display:none"></label>
+          ${svr ? '<button class="btn" id="btnArc">☁️ 归档备份到服务器</button>' : ''}
           ${state.customers.length === 0 ? '<button class="btn" id="btnSeed">初始化 68 家客户</button>' : `<span class="st done">客户库：${state.customers.length} 家</span>`}
         </div>
-        <p class="muted" style="margin-top:10px">单机模式下数据存于本机浏览器，请每周导出一次备份；切换电脑/浏览器用备份迁移。</p>
+        <p class="muted" style="margin-top:10px">${svr
+          ? '☁️ 云端模式：数据已自动实时留存服务器（页面改动约 3 秒后上推，含最近 10 份历史版本）。导出 JSON 与服务器归档用于双保险。'
+          : '单机模式下数据存于本机浏览器，请每周导出一次备份；切换电脑/浏览器用备份迁移。'}</p>
       </div>
       <div class="panel">
+        ${svr ? `
+        <h3>🤖 AI 接口（服务器代理）</h3>
+        <div class="msgbox">☁️ <b>AI 由服务器统一代理</b>${getHealth() && getHealth().ai && getHealth().ai.model ? `（模型：${esc(getHealth().ai.model)}）` : ''}：API Key 只保存在服务器，不再下发任何浏览器，员工无法查看或导出。</div>
+        <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button class="btn ghost" id="aiSrvTest">🔌 测试服务器 AI</button>
+          <span class="st ${serverAiReady() ? 'done' : 'todo'}">${serverAiReady() ? '✓ 服务器已配置' : '未配置（离线智能识别可用）'}</span>
+        </div>
+        <p id="aiTestOut" style="margin:8px 0 0;font-size:13px;min-height:18px"></p>
+        <p class="muted" style="margin-top:8px">服务器侧配置：server/.env（AI_API_KEY、AI_ENDPOINT=zhipu/deepseek/tongyi/kimi/doubao/hunyuan/qianfan、AI_MODEL）。未配置时「数据导入」离线智能识别依然可用。</p>
+        ` : `
         <h3>🤖 AI 接口（智能导入解析用，可选）</h3>
         <label>厂商预设</label>
         <select id="aiPreset" style="width:100%"></select>
@@ -92,6 +107,7 @@ export function render(root, ctx) {
         <p id="aiTestOut" style="margin:8px 0 0;font-size:13px;min-height:18px"></p>
         <p class="muted" id="aiHint" style="margin-top:6px"></p>
         <p class="muted" style="margin-top:8px">仅存本机浏览器（不会进仓库/云端/备份 JSON），用于「数据导入」页的 AI 解析任意表格。无 Key 时智能识别（离线）依然可用。</p>
+        `}
       </div>
       <div class="panel">
         <h3>⚠️ 危险操作</h3>
@@ -217,6 +233,21 @@ export function render(root, ctx) {
     if (r.empty) { toast('种子数据为空：本地运行 node scripts/gen-seed.mjs 生成后再试（客户隐私不入库）'); return; }
     toast(r.skipped ? '已存在客户库' : `✓ 已初始化 ${r.count} 家`); window.__rerender?.();
   };
+  // 备份归档到服务器（云端模式专属）
+  const arcBtn = root.querySelector('#btnArc');
+  if (arcBtn) arcBtn.onclick = async () => {
+    arcBtn.disabled = true;
+    try {
+      const data = exportAllLocal();
+      const filename = `辫子哥系统备份_${new Date().toISOString().slice(0, 10)}.json`;
+      const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+      await archiveBackup(blob, filename, state.month);
+      toast('✓ 备份已归档到服务器（云端管理 → 文件归档 可见）');
+    } catch (e) { toast('归档失败：' + e.message); }
+    arcBtn.disabled = false;
+  };
+
+  if (!svr) {
   // AI 接口配置（localStorage zx_ai_conf，独立于业务数据备份）
   const presetSel = root.querySelector('#aiPreset');
   const hintEl = root.querySelector('#aiHint');
@@ -317,6 +348,26 @@ export function render(root, ctx) {
     st.textContent = '未配置（离线智能识别可用）'; st.className = 'st todo';
     toast('AI 配置已清除');
   };
+  } else {
+    // 云端模式：AI 由服务器代理，本页只提供连通性测试
+    const srvTest = root.querySelector('#aiSrvTest');
+    if (srvTest) srvTest.onclick = async () => {
+      const out = root.querySelector('#aiTestOut');
+      srvTest.disabled = true;
+      out.style.color = ''; out.textContent = '⏳ 正在通过服务器请求 AI（最多 30 秒）…';
+      const t0 = Date.now();
+      try {
+        const j = await aiChat({ messages: [{ role: 'user', content: '回复OK' }], max_tokens: 8, temperature: 0 });
+        const reply = ((j.choices?.[0]?.message || {}).content || '').trim().slice(0, 20);
+        out.style.color = '#15803d';
+        out.textContent = `✓ 服务器 AI 正常（${((Date.now() - t0) / 1000).toFixed(1)}s${reply ? ' · 回复：' + esc(reply) : ''}）`;
+      } catch (e) {
+        out.style.color = '#b91c1c';
+        out.textContent = `✗ 服务器 AI 异常：${e.message}`;
+      }
+      srvTest.disabled = false;
+    };
+  }
 
   // 清空全部数据：输入"清空"二次确认
   root.querySelector('#btnWipe').onclick = () => {

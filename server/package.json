@@ -1,0 +1,16 @@
+{
+  "name": "zc-daizhang-server",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "辫子哥代账系统 · 云端数据留存后端（登录/数据同步/行为日志/文件/AI代理）",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1"
+  }
+}

@@ -8,3 +8,8 @@ dist/
 src/seed-data.local.js
 # 本机安全扫描工具状态，不入库
 .mimosa/
+# 自建后端：数据库 / 上传文件 / 环境密钥，绝不入库
+server/data/
+server/uploads/
+server/.env
+!server/.env.example

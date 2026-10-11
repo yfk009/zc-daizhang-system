@@ -4,6 +4,7 @@
 import { esc, toast } from '../ui.js';
 import { state, loadAll, prevDataMonth } from '../app-state.js';
 import { store, newId } from '../db.js';
+import { isServerMode, serverAiReady, aiChat } from '../api.js';
 import { buildMonthTasks, inferTier } from '../templates.js';
 import {
   detectHeaderRow, detectMode, guessColumns, matchClient,
@@ -390,7 +391,10 @@ async function autoProcess(root, ctx) {
 /* ---------- AI 大模型解析（可选 · 全部列式表格） ---------- */
 async function aiParseAll(root, ctx) {
   const conf = aiConf();
-  if (!conf || !conf.apiKey) { toast('请先在设置页配置 AI 接口'); return; }
+  const cloudAi = isServerMode() && serverAiReady();
+  if (cloudAi) {
+    // 云端模式：Key 在服务器，前端不带任何密钥
+  } else if (!conf || !conf.apiKey) { toast('云端 AI 未配置且本机未配置 Key：请让管理员配置服务器 AI，或在设置页填本机 Key'); return; }
   const aSheets = wbData.sheetNames.filter(n => sheetAn[n] && sheetAn[n].mode === 'A');
   if (!aSheets.length) { toast('没有列式表格需要 AI 解析'); return; }
   toast(`🤖 AI 逐表解析中（${aSheets.length} 张）…`);
@@ -400,16 +404,21 @@ async function aiParseAll(root, ctx) {
     const an = sheetAn[name];
     const tsv = [an.headers.map(h => String(h ?? '')).join('\t'), ...an.dataRows.map(r => r.map(c => String(c ?? '')).join('\t'))].join('\n').slice(0, 9000);
     try {
-      const res = await fetch(String(conf.base || 'https://open.bigmodel.cn/api/paas/v4').replace(/\/$/, '') + '/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + conf.apiKey },
-        body: JSON.stringify({
-          model: conf.model || 'glm-4-flash', temperature: 0,
-          messages: [{ role: 'system', content: sys }, { role: 'user', content: tsv }],
-        }),
-      });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const j = await res.json();
+      let j;
+      if (cloudAi) {
+        j = await aiChat({ temperature: 0, messages: [{ role: 'system', content: sys }, { role: 'user', content: tsv }] });
+      } else {
+        const res = await fetch(String(conf.base || 'https://open.bigmodel.cn/api/paas/v4').replace(/\/$/, '') + '/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + conf.apiKey },
+          body: JSON.stringify({
+            model: conf.model || 'glm-4-flash', temperature: 0,
+            messages: [{ role: 'system', content: sys }, { role: 'user', content: tsv }],
+          }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        j = await res.json();
+      }
       const text = j?.choices?.[0]?.message?.content || '';
       const m = text.match(/\[[\s\S]*\]/);
       if (!m) throw new Error('未返回有效 JSON');
