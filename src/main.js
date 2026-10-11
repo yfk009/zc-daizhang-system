@@ -3,7 +3,7 @@ import './style.css';
 import { APP_NAME, VERSION } from './config.js';
 import { init, getMode, getUser, setUser } from './db.js';
 import { state, loadAll, setMonth, seedCustomers } from './app-state.js';
-import { probe, resume, login, logout, switchGuard, isServerMode, getMe, pullData, importServerData, markDirty, pushData } from './api.js';
+import { probe, resume, login, register, logout, switchGuard, isServerMode, getMe, pullData, importServerData, markDirty, pushData } from './api.js';
 import { toast, monthNow, esc } from './ui.js';
 
 import * as overview from './views/overview.js';
@@ -50,41 +50,55 @@ function tabsNow() {
   return TABS;
 }
 
-function renderLogin(err) {
+function renderLogin(err, mode = 'login') {
+  const isReg = mode === 'reg';
   document.getElementById('app').innerHTML = `
     <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(160deg,#0f172a,#1e293b)">
       <div style="width:360px;max-width:92vw;background:#fff;border-radius:16px;padding:30px 28px;box-shadow:0 20px 60px rgba(0,0,0,.35)">
         <h2 style="margin:0 0 4px;font-size:20px">${APP_NAME}</h2>
-        <p class="muted" style="margin:0 0 18px;font-size:13px">云端模式 · 请使用公司账号登录（数据实时留存服务器）</p>
+        <p class="muted" style="margin:0 0 18px;font-size:13px">${isReg ? '注册新账号（凭公司邀请码，注册后自动登录）' : '云端模式 · 请使用公司账号登录（数据实时留存服务器）'}</p>
         <label>账号</label>
-        <input id="lgUser" autocomplete="username" placeholder="如 boss / xiaowang" style="width:100%">
-        <label>密码</label>
-        <input id="lgPass" type="password" autocomplete="current-password" placeholder="••••••" style="width:100%">
+        <input id="lgUser" autocomplete="username" placeholder="小写字母/数字，如 xiaowang" style="width:100%">
+        ${isReg ? `
+        <label>姓名（与系统内成员名一致，用于任务派单显示）</label>
+        <input id="lgName" placeholder="如 小王" style="width:100%">` : ''}
+        <label>密码${isReg ? '（至少 6 位）' : ''}</label>
+        <input id="lgPass" type="password" autocomplete="${isReg ? 'new-password' : 'current-password'}" placeholder="••••••" style="width:100%">
+        ${isReg ? `
+        <label>邀请码</label>
+        <input id="lgInvite" inputmode="numeric" placeholder="向公司索取" style="width:100%">` : ''}
         <p id="lgErr" style="color:#b91c1c;font-size:13px;min-height:18px;margin:8px 0 4px">${err ? esc(err) : ''}</p>
-        <button class="btn" id="lgGo" style="width:100%;margin-top:6px">登 录</button>
-        <p class="muted" style="font-size:12px;margin-top:14px">没有账号？联系老板在「云端管理 → 账号管理」开通；首次部署的初始管理员账号见服务器启动日志。</p>
+        <button class="btn" id="lgGo" style="width:100%;margin-top:6px">${isReg ? '注 册 并 登 录' : '登 录'}</button>
+        <p style="text-align:center;margin:12px 0 0">
+          <a href="javascript:void(0)" id="lgSwitch" style="font-size:13px;color:#2563eb">${isReg ? '已有账号？返回登录' : '没有账号？用邀请码注册'}</a>
+        </p>
+        <p class="muted" style="font-size:12px;margin-top:10px">${isReg
+          ? '邀请码即权限：管理员邀请码注册的账号拥有全部管理权限；员工邀请码注册的账号为普通权限（不能修改系统重要设置）。'
+          : '员工为普通权限：任务打勾/税金确认/导入等日常操作均可，系统重要设置仅管理员可改。'}</p>
       </div>
     </div>`;
   const go = async () => {
     const u = document.getElementById('lgUser').value.trim();
     const p = document.getElementById('lgPass').value;
     const btn = document.getElementById('lgGo');
-    if (!u || !p) { renderLogin('请输入账号和密码'); return; }
-    btn.disabled = true; btn.textContent = '登录中…';
+    if (!u || !p) { renderLogin('请输入账号和密码', mode); return; }
+    btn.disabled = true; btn.textContent = isReg ? '注册中…' : '登录中…';
     try {
-      const me = await login(u, p);
+      const me = isReg
+        ? await register(u, p, (document.getElementById('lgName') || {}).value?.trim() || '', (document.getElementById('lgInvite') || {}).value?.trim() || '')
+        : await login(u, p);
       switchGuard(me.username);
-      toast('欢迎，' + me.name);
+      toast((isReg ? '注册成功，欢迎 ' : '欢迎，') + me.name + (me.role === 'boss' ? '（管理员）' : ''));
       await afterLogin();
       await boot2();
     } catch (e) {
-      renderLogin(e.message || '登录失败');
+      renderLogin(e.message || (isReg ? '注册失败' : '登录失败'), mode);
     }
   };
   document.getElementById('lgGo').onclick = go;
+  document.getElementById('lgSwitch').onclick = () => renderLogin('', isReg ? 'login' : 'reg');
   const onKey = (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } };
-  document.getElementById('lgPass').onkeydown = onKey;
-  document.getElementById('lgUser').onkeydown = onKey;
+  ['lgUser', 'lgPass', 'lgName', 'lgInvite'].forEach(id => { const el = document.getElementById(id); if (el) el.onkeydown = onKey; });
   document.getElementById('lgUser').focus();
 }
 

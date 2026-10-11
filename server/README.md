@@ -24,6 +24,7 @@ node index.js            # 默认 127.0.0.1:3000，首次启动打印初始管�
 |---|---|---|
 | GET | /api/health | 探测（含 AI 配置状态） |
 | POST | /api/login | 账号密码登录 → JWT（同账号+IP 10 分钟内错 8 次锁 10 分钟） |
+| POST | /api/register | 邀请码自助注册：INVITE_BOSS（默认8888）=管理员 / INVITE_STAFF（默认1111）=员工，同 IP 限速防猜码，注册即登录 |
 | GET | /api/me | 当前账号信息 |
 | POST | /api/logout | 登出（记日志） |
 | GET/PUT | /api/data/:scope | 按人按站点整包数据存取（前端用 `_all`）；PUT 自动留最近 10 份历史 |

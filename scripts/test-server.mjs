@@ -156,6 +156,23 @@ try {
   await api('/api/data/_all', { method: 'PUT', token: boss, tenant: '../evil', body: { data: { customers: [] } } });
   r = await api('/api/admin/overview', { token: boss });
   check('非法租户头回落 main', (r.json.rows || []).some(x => x.tenant === 'main' && x.username === 'admintest'), JSON.stringify(r.json).slice(0, 200));
+
+  // 邀请码注册：8888=管理员 / 1111=员工
+  r = await api('/api/register', { method: 'POST', body: { username: 'regboss', password: 'reg654321', name: '注册管理员', invite: '9999' }, tenant: 'site2' });
+  check('错误邀请码 403', r.status === 403, 'got ' + r.status);
+  r = await api('/api/register', { method: 'POST', body: { username: 'regboss', password: 'reg654321', name: '注册管理员', invite: '8888' }, tenant: 'site2' });
+  check('8888 注册为管理员并自动登录', r.status === 200 && r.json.user.role === 'boss' && !!r.json.token, JSON.stringify(r.json));
+  r = await api('/api/register', { method: 'POST', body: { username: 'regstaff', password: 'reg654321', name: '注册员工', invite: '1111' }, tenant: 'site2' });
+  check('1111 注册为员工', r.status === 200 && r.json.user.role === 'staff', JSON.stringify(r.json));
+  const regStaff = r.json.token;
+  r = await api('/api/register', { method: 'POST', body: { username: 'regstaff', password: 'reg654321', name: '重复', invite: '1111' } });
+  check('重复账号 409', r.status === 409, 'got ' + r.status);
+  r = await api('/api/register', { method: 'POST', body: { username: 'BAD!', password: 'reg654321', name: 'X', invite: '1111' } });
+  check('注册非法用户名 400', r.status === 400, 'got ' + r.status);
+  r = await api('/api/admin/overview', { token: regStaff });
+  check('注册员工无管理权限 403', r.status === 403, 'got ' + r.status);
+  r = await api('/api/admin/logs?limit=50', { token: boss });
+  check('注册日志含成功与失败（不含码值）', (r.json.logs || []).some(l => l.action === 'register') && (r.json.logs || []).some(l => l.action === 'register_fail') && !JSON.stringify(r.json.logs).includes('8888'), '');
 } catch (e) {
   check('测试过程无异常', false, e.message);
 } finally {

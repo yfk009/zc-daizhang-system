@@ -33,6 +33,8 @@ const AI_API_KEY = env('AI_API_KEY', '');
 const AI_MODEL = env('AI_MODEL', 'glm-4-flash');
 const ADMIN_USER = env('ADMIN_USER', 'boss');
 const ADMIN_PASS = env('ADMIN_PASS', 'bianzige2026');
+const INVITE_BOSS = env('INVITE_BOSS', '8888');   // 管理员邀请码（注册即管理员）
+const INVITE_STAFF = env('INVITE_STAFF', '1111'); // 员工邀请码（普通权限）
 const MAX_DATA_BYTES = 12 * 1024 * 1024;
 
 // AI 上游端点白名单：值全部为代码内字面量常量，env 只能按键选择，不接受任意地址
@@ -128,6 +130,33 @@ app.post('/api/login', (req, res) => {
 });
 
 app.get('/api/me', auth, (req, res) => res.json({ user: req.user }));
+
+/* 邀请码注册：8888=管理员 / 1111=员工（可在 server/.env 改 INVITE_BOSS / INVITE_STAFF）；
+   同 IP 10 分钟限速防猜码，日志只记结果不记码值 */
+app.post('/api/register', (req, res) => {
+  const b = req.body || {};
+  const username = String(b.username || '').trim().toLowerCase();
+  const password = String(b.password || '');
+  const name = String(b.name || '').trim();
+  const invite = String(b.invite || '').trim();
+  const tenant = tenantOf(req);
+  if (!username || !password || !name || !invite) return res.status(400).json({ error: '请填齐账号、姓名、密码和邀请码' });
+  const regKey = 'reg|' + ipOf(req);
+  if (rateBlocked(regKey)) return res.status(429).json({ error: '尝试次数过多，请 10 分钟后再试' });
+  const role = invite === INVITE_BOSS ? 'boss' : invite === INVITE_STAFF ? 'staff' : null;
+  if (!role) {
+    rateFail(regKey);
+    logAct(null, tenant, 'register_fail', '邀请码不正确', req);
+    return res.status(403).json({ error: '邀请码不正确' });
+  }
+  if (!/^[a-z0-9_-]{2,24}$/.test(username)) return res.status(400).json({ error: '账号限 2-24 位小写字母/数字/-_' });
+  if (password.length < 6) return res.status(400).json({ error: '密码至少 6 位' });
+  if (store.findUserByUsername(username)) return res.status(409).json({ error: '该账号已存在，请直接登录' });
+  store.createUser(username, hashPassword(password), name, role);
+  const u = store.findUserByUsername(username);
+  logAct(u, tenant, 'register', `${username}（${name}，${role === 'boss' ? '管理员' : '员工'}）`, req);
+  res.json({ token: signToken(u), user: { id: u.id, username: u.username, name: u.name, role: u.role } });
+});
 
 app.post('/api/logout', auth, (req, res) => {
   logAct(req.user, tenantOf(req), 'logout', null, req);

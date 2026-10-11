@@ -63,6 +63,13 @@ export async function login(username, password) {
   me = r.user;
   return me;
 }
+/* 邀请码注册：8888=管理员 / 1111=员工，注册成功即登录 */
+export async function register(username, password, name, invite) {
+  const r = await apiFetch('/api/register', { method: 'POST', body: JSON.stringify({ username, password, name, invite }) });
+  localStorage.setItem(TOKEN_KEY, r.token);
+  me = r.user;
+  return me;
+}
 /* 换账号串号防护：同一浏览器上一账号≠本账号时，清空本地业务集合再从服务器拉取，
    避免上一账号（如老板）的整包被当前账号首次保存时顶名上云 */
 export function switchGuard(username) {
