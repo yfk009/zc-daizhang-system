@@ -29,25 +29,43 @@ const env = (k, d) => process.env[k] ?? ENV[k] ?? d;
 const PORT = Number(env('PORT', 3000));
 const DATA_DIR = env('DATA_DIR', path.join(SERVER_DIR, 'data'));
 const UPLOAD_DIR = env('UPLOAD_DIR', path.join(SERVER_DIR, 'uploads'));
-const AI_API_KEY = env('AI_API_KEY', '');
-const AI_MODEL = env('AI_MODEL', 'glm-4-flash');
 const ADMIN_USER = env('ADMIN_USER', 'boss');
 const ADMIN_PASS = env('ADMIN_PASS', 'bianzige2026');
 const INVITE_BOSS = env('INVITE_BOSS', '8888');   // 管理员邀请码（注册即管理员）
 const INVITE_STAFF = env('INVITE_STAFF', '1111'); // 员工邀请码（普通权限）
 const MAX_DATA_BYTES = 12 * 1024 * 1024;
 
-// AI 上游端点白名单：值全部为代码内字面量常量，env 只能按键选择，不接受任意地址
-const AI_ENDPOINTS = {
-  zhipu: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
-  deepseek: 'https://api.deepseek.com/chat/completions',
-  tongyi: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-  kimi: 'https://api.moonshot.cn/v1/chat/completions',
-  doubao: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
-  hunyuan: 'https://api.hunyuan.cloud.tencent.com/v1/chat/completions',
-  qianfan: 'https://qianfan.baidubce.com/v2/chat/completions',
-};
-const AI_CHAT_URL = AI_ENDPOINTS[env('AI_ENDPOINT', 'zhipu')] || '';
+// AI 上游端点白名单：支持"服务器界面在线配置"（存 kv 表即时生效）；server/.env 仅作首次默认值
+// 配置只能"按键选择"厂商，URL 一律来自 switch 内的字面量常量，不接受任何拼接地址
+const AI_PROVIDERS = ['zhipu', 'deepseek', 'tongyi', 'kimi', 'doubao', 'hunyuan', 'qianfan'];
+function endpointUrlOf(key) {
+  switch (key) {
+    case 'zhipu': return 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
+    case 'deepseek': return 'https://api.deepseek.com/chat/completions';
+    case 'tongyi': return 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
+    case 'kimi': return 'https://api.moonshot.cn/v1/chat/completions';
+    case 'doubao': return 'https://ark.cn-beijing.volces.com/api/v3/chat/completions';
+    case 'hunyuan': return 'https://api.hunyuan.cloud.tencent.com/v1/chat/completions';
+    case 'qianfan': return 'https://qianfan.baidubce.com/v2/chat/completions';
+    default: return '';
+  }
+}
+const AI_DEFAULT_MODEL = 'glm-4-flash';
+const AI_MODEL = env('AI_MODEL', AI_DEFAULT_MODEL);
+
+// 生效配置：界面保存的 kv 配置优先，否则回落环境变量；每次请求时读取（保存后即时生效）
+function aiConf() {
+  const row = store.kvGet('ai_conf');
+  if (row && row.v) {
+    try {
+      const c = JSON.parse(row.v);
+      const url = endpointUrlOf(c.endpoint);
+      if (url) return { endpoint: c.endpoint, url, apiKey: c.apiKey || '', model: c.model || AI_DEFAULT_MODEL, source: 'kv' };
+    } catch { /* kv 配置损坏则走 env */ }
+  }
+  const endpoint = env('AI_ENDPOINT', 'zhipu');
+  return { endpoint, url: endpointUrlOf(endpoint), apiKey: env('AI_API_KEY', ''), model: AI_MODEL, source: 'env' };
+}
 
 await fsp.mkdir(UPLOAD_DIR, { recursive: true });
 
@@ -108,7 +126,8 @@ function sendStored(res, f, buf) {
 
 /* ---------- 基础接口 ---------- */
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, name: 'zc-daizhang-server', version: '1.0.0', ai: { configured: !!(AI_API_KEY && AI_CHAT_URL), model: AI_MODEL }, serverTime: new Date().toISOString() });
+  const c = aiConf();
+  res.json({ ok: true, name: 'zc-daizhang-server', version: '1.0.0', ai: { configured: !!(c.apiKey && c.url), model: c.model, endpoint: c.endpoint }, serverTime: new Date().toISOString() });
 });
 
 app.post('/api/login', (req, res) => {
@@ -238,26 +257,86 @@ app.delete('/api/files/:id', auth, async (req, res) => {
 });
 
 /* ---------- AI 代理：Key 只存服务器，不下发浏览器 ---------- */
-app.post('/api/ai/chat', auth, async (req, res) => {
-  if (!AI_API_KEY || !AI_CHAT_URL) return res.status(501).json({ error: !AI_CHAT_URL ? 'AI_ENDPOINT 未在白名单（zhipu/deepseek/tongyi/kimi/doubao/hunyuan/qianfan）' : '服务器未配置 AI Key（server/.env 的 AI_API_KEY）' });
+/* 配置读取/保存/测试（仅管理员）：保存入 kv 表即时生效，无需重启。
+   测试接口测"当前生效配置"（与 chat 同一取 URL 路径），前端流程为"保存并测试" */
+app.get('/api/ai/config', auth, bossOnly, (req, res) => {
+  const c = aiConf();
+  res.json({
+    endpoint: c.endpoint, model: c.model, source: c.source,
+    configured: !!(c.apiKey && c.url),
+    apiKeyMasked: c.apiKey ? c.apiKey.slice(0, 6) + '****' + String(c.apiKey).slice(-4) : '',
+  });
+});
+
+app.post('/api/ai/config', auth, bossOnly, (req, res) => {
   const b = req.body || {};
-  if (!Array.isArray(b.messages) || !b.messages.length) return res.status(400).json({ error: '缺少 messages' });
-  const model = String(b.model || AI_MODEL).slice(0, 80);
+  const endpoint = String(b.endpoint || '').trim();
+  if (!AI_PROVIDERS.includes(endpoint)) return res.status(400).json({ error: '\u5382\u5546\u4e0d\u5728\u767d\u540d\u5355\uff08zhipu/deepseek/tongyi/kimi/doubao/hunyuan/qianfan\uff09' });
+  const model = String(b.model || '').trim().slice(0, 80) || AI_DEFAULT_MODEL;
+  const prev = aiConf();
+  let apiKey = prev.apiKey || '';
+  if (b.clearKey === true) apiKey = '';
+  else if (typeof b.apiKey === 'string' && b.apiKey.trim()) apiKey = b.apiKey.trim();
+  store.kvSet('ai_conf', JSON.stringify({ endpoint, model, apiKey }));
+  logAct(req.user, tenantOf(req), 'ai_config_save', `${endpoint} / ${model}${apiKey ? '' : ' (no key)'}`, req);
+  res.json({ ok: true, configured: !!apiKey, model, endpoint });
+});
+
+app.post('/api/ai/test', auth, bossOnly, async (req, res) => {
+  const c = aiConf();
+  if (!c.url) return res.status(400).json({ error: '\u5f53\u524d\u5382\u5546\u4e0d\u5728\u767d\u540d\u5355' });
+  if (!c.apiKey) return res.status(400).json({ error: '\u5f53\u524d\u672a\u914d\u7f6e API Key\uff1a\u8bf7\u5148\u586b\u5199 Key \u5e76\u4fdd\u5b58\uff0c\u518d\u70b9\u6d4b\u8bd5' });
+  const b = req.body || {};
+  const model = String(b.model || c.model).slice(0, 80);
+  const apiKey = (typeof b.apiKey === 'string' && b.apiKey.trim()) ? b.apiKey.trim() : c.apiKey;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30 * 1000);
+  const t0 = Date.now();
+  try {
+    const up = await fetch(c.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: '\u56de\u590dOK' }], max_tokens: 8, temperature: 0, stream: false }),
+      signal: ctrl.signal,
+    });
+    const text = await up.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch { /* \u975e JSON \u6309\u539f\u6587\u9519\u8bef\u5904\u7406 */ }
+    if (up.ok && data && Array.isArray(data.choices) && data.choices[0]) {
+      const reply = ((data.choices[0].message || {}).content || '').trim().slice(0, 30);
+      logAct(req.user, tenantOf(req), 'ai_test', `${c.endpoint}/${model} OK ${Date.now() - t0}ms`, req);
+      res.json({ ok: true, latencyMs: Date.now() - t0, model, reply });
+    } else {
+      const msg = (data && data.error && (data.error.message || data.error.msg)) || text.slice(0, 160) || `HTTP ${up.status}`;
+      logAct(req.user, tenantOf(req), 'ai_test', `${c.endpoint}/${model} fail ${up.status}`, req);
+      res.json({ ok: false, latencyMs: Date.now() - t0, error: msg, status: up.status });
+    }
+  } catch (e) {
+    res.json({ ok: false, latencyMs: Date.now() - t0, error: e.name === 'AbortError' ? '\u8d85\u65f6(30s)' : String(e.message || e) });
+  } finally { clearTimeout(timer); }
+});
+
+app.post('/api/ai/chat', auth, async (req, res) => {
+  const c = aiConf();
+  if (!c.apiKey || !c.url) return res.status(501).json({ error: !c.url ? 'AI \u5382\u5546\u4e0d\u5728\u767d\u540d\u5355\uff08zhipu/deepseek/tongyi/kimi/doubao/hunyuan/qianfan\uff09' : '\u670d\u52a1\u5668\u672a\u914d\u7f6e AI Key\uff1a\u8bf7\u7ba1\u7406\u5458\u5728\u300c\u8bbe\u7f6e \u2192 AI \u63a5\u53e3\u300d\u4fdd\u5b58\u914d\u7f6e' });
+  const b = req.body || {};
+  if (!Array.isArray(b.messages) || !b.messages.length) return res.status(400).json({ error: '\u7f3a\u5c11 messages' });
+  const model = String(b.model || c.model).slice(0, 80);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 90 * 1000);
   try {
-    const up = await fetch(AI_CHAT_URL, {
+    const up = await fetch(c.url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + AI_API_KEY },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + c.apiKey },
       body: JSON.stringify({ model, messages: b.messages, temperature: b.temperature ?? 0, max_tokens: b.max_tokens, stream: false }),
       signal: ctrl.signal,
     });
     const text = await up.text();
-    logAct(req.user, tenantOf(req), 'ai_call', `${model} 上游=${up.status}`, req);
+    logAct(req.user, tenantOf(req), 'ai_call', `${model} \u4e0a\u6e38=${up.status}`, req);
     res.status(up.status).type('application/json').send(text);
   } catch (e) {
     logAct(req.user, tenantOf(req), 'ai_error', String(e.message || e).slice(0, 200), req);
-    res.status(502).json({ error: 'AI 上游请求失败：' + (e.name === 'AbortError' ? '超时(90s)' : String(e.message || e)) });
+    res.status(502).json({ error: 'AI \u4e0a\u6e38\u8bf7\u6c42\u5931\u8d25\uff1a' + (e.name === 'AbortError' ? '\u8d85\u65f6(90s)' : String(e.message || e)) });
   } finally { clearTimeout(timer); }
 });
 
@@ -367,5 +446,5 @@ app.use((err, req, res, next) => {
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`[zc-server] 已启动 http://127.0.0.1:${PORT}  数据目录: ${DATA_DIR}`);
   if (bootAdmin) console.log(`[zc-server] 首次启动，已创建管理员账号: ${bootAdmin.username} / ${bootAdmin.password}（请尽快登录后在管理页改密）`);
-  if (!AI_API_KEY) console.log('[zc-server] 提示: 未配置 AI_API_KEY，/api/ai/chat 将返回 501');
+  if (!aiConf().apiKey) console.log('[zc-server] \u63d0\u793a: \u672a\u914d\u7f6e AI Key\uff0c\u53ef\u5728\u7cfb\u7edf\u300c\u8bbe\u7f6e \u2192 AI \u63a5\u53e3\u300d\u5728\u7ebf\u914d\u7f6e');
 });

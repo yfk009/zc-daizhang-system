@@ -157,6 +157,14 @@ export async function aiChat(body) {
 export function serverAiReady() {
   return !!(healthInfo && healthInfo.ai && healthInfo.ai.configured);
 }
+/* 服务器 AI 配置在线管理（仅管理员）：读取/保存/测试，保存后即时生效 */
+export async function aiGetConfig() { return apiFetch('/api/ai/config'); }
+export async function aiSaveConfig(cfg) { return apiFetch('/api/ai/config', { method: 'POST', body: JSON.stringify(cfg) }); }
+export async function aiTestConfig(cfg) { return apiFetch('/api/ai/test', { method: 'POST', body: JSON.stringify(cfg) }); }
+export async function refreshHealth() {
+  try { const r = await fetch('/api/health'); if (r.ok) healthInfo = await r.json(); } catch { /* 保持旧值 */ }
+  return healthInfo;
+}
 
 /* 管理端接口（仅 boss 角色） */
 export async function adminApi(path, opts = {}) {

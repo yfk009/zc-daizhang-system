@@ -113,6 +113,26 @@ try {
   r = await api('/api/ai/chat', { method: 'POST', token: boss, body: { messages: [{ role: 'user', content: 'hi' }] } });
   check('AI 未配 Key 时 501', r.status === 501, 'got ' + r.status);
 
+  // AI 在线配置（界面保存/测试/热生效）
+  r = await api('/api/ai/config', { token: staff, tenant: 'site2' });
+  check('员工读 AI 配置 403', r.status === 403, 'got ' + r.status);
+  r = await api('/api/ai/config', { token: boss });
+  check('初始 AI 配置未配置', r.status === 200 && r.json.configured === false && r.json.source === 'env', JSON.stringify(r.json));
+  r = await api('/api/ai/config', { method: 'POST', token: boss, body: { endpoint: 'evil', model: 'x' } });
+  check('非法厂商 400', r.status === 400, 'got ' + r.status);
+  r = await api('/api/ai/config', { method: 'POST', token: boss, body: { endpoint: 'deepseek', model: 'deepseek-chat', apiKey: 'sk-fake-test-000000' } });
+  check('保存 AI 配置 ok', r.status === 200 && r.json.configured === true, JSON.stringify(r.json));
+  r = await api('/api/ai/config', { token: boss });
+  check('回读配置（Key 掩码）', r.json.configured === true && r.json.endpoint === 'deepseek' && String(r.json.apiKeyMasked).includes('****'), JSON.stringify(r.json));
+  r = await api('/api/ai/test', { method: 'POST', token: boss, body: {} });
+  check('假 Key 测试返回失败详情（非异常）', r.status === 200 && r.json.ok === false && !!r.json.error, JSON.stringify(r.json).slice(0, 120));
+  r = await api('/api/ai/chat', { method: 'POST', token: boss, body: { messages: [{ role: 'user', content: 'hi' }] } });
+  check('保存后 chat 热生效（透传上游 401/502，而非未配置 501）', r.status === 401 || r.status === 502, 'got ' + r.status);
+  r = await api('/api/ai/config', { method: 'POST', token: boss, body: { endpoint: 'deepseek', model: 'deepseek-chat', clearKey: true } });
+  check('清除 Key ok', r.status === 200 && r.json.configured === false, JSON.stringify(r.json));
+  r = await api('/api/ai/config', { token: boss });
+  check('清除后未配置', r.json.configured === false, JSON.stringify(r.json));
+
   // 文件上传/下载/权限
   const content = JSON.stringify(pkg1);
   const fd = new FormData();

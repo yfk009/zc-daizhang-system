@@ -2,7 +2,7 @@
 import { esc, toast } from '../ui.js';
 import { state, loadAll, reloadMonth, seedCustomers } from '../app-state.js';
 import { store, exportAllLocal, importAllLocal, wipeAll, getUser, setUser } from '../db.js';
-import { isServerMode, serverAiReady, getHealth, aiChat, archiveBackup } from '../api.js';
+import { isServerMode, aiChat, archiveBackup, aiGetConfig, aiSaveConfig, aiTestConfig, refreshHealth } from '../api.js';
 import { parseClientTemplate, planClientImport } from '../client-template.js';
 import { resolveOwner, TIERS } from '../templates.js';
 
@@ -80,14 +80,22 @@ export function render(root, ctx) {
       </div>
       <div class="panel">
         ${svr ? `
-        <h3>🤖 AI 接口（服务器代理）</h3>
-        <div class="msgbox">☁️ <b>AI 由服务器统一代理</b>${getHealth() && getHealth().ai && getHealth().ai.model ? `（模型：${esc(getHealth().ai.model)}）` : ''}：API Key 只保存在服务器，不再下发任何浏览器，员工无法查看或导出。</div>
+        <h3>🤖 AI 接口（服务器统一配置）</h3>
+        <div class="msgbox">☁️ 在线配置，保存后<b>立即对全公司生效</b>（无需重启服务）。API Key 只保存在服务器，任何浏览器都不留存。未配置时「数据导入」离线智能识别依然可用。</div>
+        <label>厂商（国内主流模型，选中自动带出默认模型）</label>
+        <select id="aiCloudPreset" style="width:100%"></select>
+        <label>模型</label>
+        <input id="aiCloudModel" placeholder="glm-4-flash" style="width:100%">
+        <label>API Key（留空 = 保持已保存的 Key 不变）</label>
+        <input id="aiCloudKey" type="password" placeholder="sk-..." style="width:100%">
         <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-          <button class="btn ghost" id="aiSrvTest">🔌 测试服务器 AI</button>
-          <span class="st ${serverAiReady() ? 'done' : 'todo'}">${serverAiReady() ? '✓ 服务器已配置' : '未配置（离线智能识别可用）'}</span>
+          <button class="btn" id="aiCloudSaveTest">💾 保存并测试</button>
+          <button class="btn ghost" id="aiCloudTest">🔌 仅测试当前配置</button>
+          <button class="btn ghost" id="aiCloudClear">清除配置</button>
+          <span class="st" id="aiCloudState"></span>
         </div>
-        <p id="aiTestOut" style="margin:8px 0 0;font-size:13px;min-height:18px"></p>
-        <p class="muted" style="margin-top:8px">服务器侧配置：server/.env（AI_API_KEY、AI_ENDPOINT=zhipu/deepseek/tongyi/kimi/doubao/hunyuan/qianfan、AI_MODEL）。未配置时「数据导入」离线智能识别依然可用。</p>
+        <p id="aiCloudOut" style="margin:8px 0 0;font-size:13px;min-height:18px"></p>
+        <p class="muted" id="aiCloudMeta" style="margin-top:6px"></p>
         ` : `
         <h3>🤖 AI 接口（智能导入解析用，可选）</h3>
         <label>厂商预设</label>
@@ -349,24 +357,65 @@ export function render(root, ctx) {
     toast('AI 配置已清除');
   };
   } else {
-    // 云端模式：AI 由服务器代理，本页只提供连通性测试
-    const srvTest = root.querySelector('#aiSrvTest');
-    if (srvTest) srvTest.onclick = async () => {
-      const out = root.querySelector('#aiTestOut');
-      srvTest.disabled = true;
-      out.style.color = ''; out.textContent = '⏳ 正在通过服务器请求 AI（最多 30 秒）…';
-      const t0 = Date.now();
+    // 云端模式：AI 在线配置（厂商预设 / Key / 测试 / 保存到服务器，即时生效）
+    const CLOUD_NAMES = { zhipu: '智谱 GLM', deepseek: 'DeepSeek', tongyi: '通义千问 Qwen', kimi: 'Kimi', doubao: '豆包', hunyuan: '混元', qianfan: '千帆文心' };
+    const CLOUD_MODELS = { zhipu: 'glm-4-flash', deepseek: 'deepseek-chat', tongyi: 'qwen-plus', kimi: 'moonshot-v1-8k', doubao: 'doubao-seed-1-6-flash-250815', hunyuan: 'hunyuan-turbos-latest', qianfan: 'ernie-4.0-8k-latest' };
+    const presetEl = root.querySelector('#aiCloudPreset');
+    const modelEl = root.querySelector('#aiCloudModel');
+    const keyEl = root.querySelector('#aiCloudKey');
+    const stateEl = root.querySelector('#aiCloudState');
+    const outEl = root.querySelector('#aiCloudOut');
+    const metaEl = root.querySelector('#aiCloudMeta');
+    presetEl.innerHTML = Object.entries(CLOUD_NAMES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+    const setOut = (color, text) => { outEl.style.color = color; outEl.textContent = text; };
+    async function loadCfg() {
       try {
-        const j = await aiChat({ messages: [{ role: 'user', content: '回复OK' }], max_tokens: 8, temperature: 0 });
-        const reply = ((j.choices?.[0]?.message || {}).content || '').trim().slice(0, 20);
-        out.style.color = '#15803d';
-        out.textContent = `✓ 服务器 AI 正常（${((Date.now() - t0) / 1000).toFixed(1)}s${reply ? ' · 回复：' + esc(reply) : ''}）`;
-      } catch (e) {
-        out.style.color = '#b91c1c';
-        out.textContent = `✗ 服务器 AI 异常：${e.message}`;
-      }
-      srvTest.disabled = false;
+        const c = await aiGetConfig();
+        presetEl.value = c.endpoint || 'zhipu';
+        modelEl.value = c.model || '';
+        stateEl.textContent = c.configured ? '✓ 已配置（Key ' + (c.apiKeyMasked || '') + '）' : '未配置（离线智能识别可用）';
+        stateEl.className = 'st ' + (c.configured ? 'done' : 'todo');
+        metaEl.textContent = `当前生效：${CLOUD_NAMES[c.endpoint] || c.endpoint} / ${c.model}（${c.source === 'kv' ? '界面保存' : '服务器默认配置'}）`;
+      } catch (e) { metaEl.textContent = '读取配置失败：' + e.message; }
+    }
+    presetEl.onchange = () => { modelEl.value = CLOUD_MODELS[presetEl.value] || ''; };
+    root.querySelector('#aiCloudSaveTest').onclick = async () => {
+      const btn = root.querySelector('#aiCloudSaveTest');
+      const payload = { endpoint: presetEl.value, model: modelEl.value.trim() };
+      const key = keyEl.value.trim();
+      if (key) payload.apiKey = key;
+      btn.disabled = true; setOut('', '⏳ 正在保存并测试（最多 30 秒）…');
+      try {
+        await aiSaveConfig(payload);
+        await refreshHealth();
+        const r = await aiTestConfig({ model: payload.model, ...(key ? { apiKey: key } : {}) });
+        if (r.ok) setOut('#15803d', `✓ 测试成功（${(r.latencyMs / 1000).toFixed(1)}s · ${r.model}${r.reply ? ' · 回复：' + esc(r.reply) : ''}）—— 配置已对全公司生效`);
+        else setOut('#b45309', `⚠️ 配置已保存，但测试未通过：${r.error}（请检查 Key/模型后重新保存）`);
+        keyEl.value = '';
+        await loadCfg();
+      } catch (e) { setOut('#b91c1c', '✗ 失败：' + e.message); }
+      btn.disabled = false;
     };
+    root.querySelector('#aiCloudTest').onclick = async () => {
+      const btn = root.querySelector('#aiCloudTest');
+      btn.disabled = true; setOut('', '⏳ 正在测试当前服务器配置（最多 30 秒）…');
+      try {
+        const r = await aiTestConfig({});
+        if (r.ok) setOut('#15803d', `✓ 服务器 AI 正常（${(r.latencyMs / 1000).toFixed(1)}s · ${r.model}${r.reply ? ' · 回复：' + esc(r.reply) : ''}）`);
+        else setOut('#b91c1c', `✗ 测试失败：${r.error}`);
+      } catch (e) { setOut('#b91c1c', '✗ 失败：' + e.message); }
+      btn.disabled = false;
+    };
+    root.querySelector('#aiCloudClear').onclick = async () => {
+      if (!confirm('确认清除服务器上保存的 AI 配置？清除后员工端 AI 解析自动回落离线识别。')) return;
+      try {
+        await aiSaveConfig({ endpoint: presetEl.value, model: modelEl.value.trim(), clearKey: true });
+        await refreshHealth();
+        setOut('', '已清除配置');
+        await loadCfg();
+      } catch (e) { setOut('#b91c1c', '清除失败：' + e.message); }
+    };
+    loadCfg();
   }
 
   // 清空全部数据：输入"清空"二次确认
