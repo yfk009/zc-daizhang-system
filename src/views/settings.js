@@ -80,7 +80,9 @@ export function render(root, ctx) {
       </div>
       <div class="panel">
         ${svr ? `
-        <h3>🤖 AI 接口（服务器统一配置）</h3>
+        <h3 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">🤖 AI 接口（服务器统一配置）
+          <a href="javascript:void(0)" id="aiCloudOverview" style="font-size:12px;font-weight:normal;color:#2563eb;border:1px solid #bfdbfe;background:#eff6ff;border-radius:999px;padding:3px 10px;text-decoration:none">📋 各家厂家最新模型概览</a>
+        </h3>
         <div class="msgbox">☁️ 在线配置，保存后<b>立即对全公司生效</b>（无需重启服务）。API Key 只保存在服务器，任何浏览器都不留存。未配置时「数据导入」离线智能识别依然可用。</div>
         <label>厂商（国内主流模型，选中自动带出默认模型）</label>
         <select id="aiCloudPreset" style="width:100%"></select>
@@ -371,6 +373,16 @@ export function render(root, ctx) {
       qianfan: ['ernie-5.1', 'ernie-4.0-8k-latest', 'ernie-3.5-8k-latest'],
     };
     const CUSTOM = '__custom__';
+    // 各厂商官网模型列表页（新标签打开，以官方为准）
+    const OFFICIAL_URLS = {
+      zhipu: 'https://docs.bigmodel.cn/cn/guide/start/model-overview',
+      deepseek: 'https://api-docs.deepseek.com/zh-cn/',
+      tongyi: 'https://help.aliyun.com/zh/model-studio/models',
+      kimi: 'https://platform.kimi.com/docs/models',
+      doubao: 'https://www.volcengine.com/product/doubao',
+      hunyuan: 'https://hunyuan.tencent.com',
+      qianfan: 'https://cloud.baidu.com/doc/qianfan/s/rmh4stp0j',
+    };
     const presetEl = root.querySelector('#aiCloudPreset');
     const modelEl = root.querySelector('#aiCloudModel');
     const customEl = root.querySelector('#aiCloudModelCustom');
@@ -437,6 +449,27 @@ export function render(root, ctx) {
         setOut('', '已清除配置');
         await loadCfg();
       } catch (e) { setOut('#b91c1c', '清除失败：' + e.message); }
+    };
+    root.querySelector('#aiCloudOverview').onclick = () => {
+      let mask = document.getElementById('aiOvMask');
+      if (mask) mask.remove();
+      mask = document.createElement('div');
+      mask.id = 'aiOvMask'; mask.className = 'modal-mask on';
+      mask.innerHTML = `<div class="modal" style="max-width:680px;width:94vw">
+        <h3>📋 各家厂家最新模型概览</h3>
+        <table style="margin-top:10px;min-width:0;width:100%"><thead><tr><th style="width:110px">厂商</th><th>本系统内置备选</th><th style="width:100px">官网最新</th></tr></thead><tbody>
+        ${Object.keys(CLOUD_NAMES).map(k => `<tr>
+          <td><b>${esc(CLOUD_NAMES[k])}</b></td>
+          <td class="muted" style="font-size:12px">${esc(CLOUD_MODELS[k].join('、'))}</td>
+          <td><a href="${OFFICIAL_URLS[k]}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;white-space:nowrap">官网模型页 ↗</a></td>
+        </tr>`).join('')}
+        </tbody></table>
+        <p class="muted" style="margin-top:10px">点「官网模型页 ↗」在新标签页查看该厂商当前全部型号与价格，以官方为准；官网有新型号而上方未收录时，选「✍️ 自定义模型…」填入即可。</p>
+        <div style="text-align:right;margin-top:12px"><button class="btn ghost" id="aiOvClose">关闭</button></div>
+      </div>`;
+      document.body.appendChild(mask);
+      mask.querySelector('#aiOvClose').onclick = () => mask.remove();
+      mask.addEventListener('click', (e) => { if (e.target === mask) mask.remove(); });
     };
     loadCfg();
   }
