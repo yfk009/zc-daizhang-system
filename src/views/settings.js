@@ -84,8 +84,9 @@ export function render(root, ctx) {
         <div class="msgbox">☁️ 在线配置，保存后<b>立即对全公司生效</b>（无需重启服务）。API Key 只保存在服务器，任何浏览器都不留存。未配置时「数据导入」离线智能识别依然可用。</div>
         <label>厂商（国内主流模型，选中自动带出默认模型）</label>
         <select id="aiCloudPreset" style="width:100%"></select>
-        <label>模型</label>
-        <input id="aiCloudModel" placeholder="glm-4-flash" style="width:100%">
+        <label>模型（每家提供多款主流型号，也可自定义）</label>
+        <select id="aiCloudModel" style="width:100%"></select>
+        <input id="aiCloudModelCustom" placeholder="输入自定义模型名，如 glm-4.5" style="width:100%;display:none">
         <label>API Key（留空 = 保持已保存的 Key 不变）</label>
         <input id="aiCloudKey" type="password" placeholder="sk-..." style="width:100%">
         <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
@@ -359,30 +360,52 @@ export function render(root, ctx) {
   } else {
     // 云端模式：AI 在线配置（厂商预设 / Key / 测试 / 保存到服务器，即时生效）
     const CLOUD_NAMES = { zhipu: '智谱 GLM', deepseek: 'DeepSeek', tongyi: '通义千问 Qwen', kimi: 'Kimi', doubao: '豆包', hunyuan: '混元', qianfan: '千帆文心' };
-    const CLOUD_MODELS = { zhipu: 'glm-4-flash', deepseek: 'deepseek-chat', tongyi: 'qwen-plus', kimi: 'moonshot-v1-8k', doubao: 'doubao-seed-1-6-flash-250815', hunyuan: 'hunyuan-turbos-latest', qianfan: 'ernie-4.0-8k-latest' };
+    // 每家厂商的主流模型备选（首项为主打默认），末位"自定义"支持任意型号
+    const CLOUD_MODELS = {
+      zhipu: ['glm-4-flash', 'glm-4-air', 'glm-4-plus', 'glm-4.5'],
+      deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+      tongyi: ['qwen-plus', 'qwen-turbo', 'qwen-max', 'qwen-long'],
+      kimi: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k', 'kimi-k2-turbo-preview'],
+      doubao: ['doubao-seed-1-6-flash-250815', 'doubao-1-5-pro-32k-250115', 'doubao-1-5-lite-32k-250115'],
+      hunyuan: ['hunyuan-turbos-latest', 'hunyuan-lite', 'hunyuan-standard', 'hunyuan-pro'],
+      qianfan: ['ernie-4.0-8k-latest', 'ernie-3.5-8k-latest', 'ernie-speed-8k', 'ernie-lite-8k'],
+    };
+    const CUSTOM = '__custom__';
     const presetEl = root.querySelector('#aiCloudPreset');
     const modelEl = root.querySelector('#aiCloudModel');
+    const customEl = root.querySelector('#aiCloudModelCustom');
     const keyEl = root.querySelector('#aiCloudKey');
     const stateEl = root.querySelector('#aiCloudState');
     const outEl = root.querySelector('#aiCloudOut');
     const metaEl = root.querySelector('#aiCloudMeta');
     presetEl.innerHTML = Object.entries(CLOUD_NAMES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+    const getModel = () => (modelEl.value === CUSTOM ? customEl.value.trim() : modelEl.value);
+    function fillModels(endpoint, current) {
+      const list = CLOUD_MODELS[endpoint] || [];
+      modelEl.innerHTML = list.map(m => `<option value="${m}">${m}</option>`).join('')
+        + `<option value="${CUSTOM}">✍️ 自定义模型…</option>`;
+      if (current && list.includes(current)) { modelEl.value = current; customEl.style.display = 'none'; customEl.value = ''; }
+      else if (current) { modelEl.value = CUSTOM; customEl.style.display = ''; customEl.value = current; }
+      else customEl.style.display = 'none';
+    }
     const setOut = (color, text) => { outEl.style.color = color; outEl.textContent = text; };
     async function loadCfg() {
       try {
         const c = await aiGetConfig();
         presetEl.value = c.endpoint || 'zhipu';
-        modelEl.value = c.model || '';
+        fillModels(presetEl.value, c.model || '');
         stateEl.textContent = c.configured ? '✓ 已配置（Key ' + (c.apiKeyMasked || '') + '）' : '未配置（离线智能识别可用）';
         stateEl.className = 'st ' + (c.configured ? 'done' : 'todo');
         metaEl.textContent = `当前生效：${CLOUD_NAMES[c.endpoint] || c.endpoint} / ${c.model}（${c.source === 'kv' ? '界面保存' : '服务器默认配置'}）`;
       } catch (e) { metaEl.textContent = '读取配置失败：' + e.message; }
     }
-    presetEl.onchange = () => { modelEl.value = CLOUD_MODELS[presetEl.value] || ''; };
+    presetEl.onchange = () => fillModels(presetEl.value, '');
+    modelEl.onchange = () => { const isC = modelEl.value === CUSTOM; customEl.style.display = isC ? '' : 'none'; if (isC) customEl.focus(); };
     root.querySelector('#aiCloudSaveTest').onclick = async () => {
       const btn = root.querySelector('#aiCloudSaveTest');
-      const payload = { endpoint: presetEl.value, model: modelEl.value.trim() };
+      const payload = { endpoint: presetEl.value, model: getModel() };
       const key = keyEl.value.trim();
+      if (!payload.model) { setOut('#b91c1c', '✗ 请先填写模型名'); return; }
       if (key) payload.apiKey = key;
       btn.disabled = true; setOut('', '⏳ 正在保存并测试（最多 30 秒）…');
       try {
@@ -409,7 +432,7 @@ export function render(root, ctx) {
     root.querySelector('#aiCloudClear').onclick = async () => {
       if (!confirm('确认清除服务器上保存的 AI 配置？清除后员工端 AI 解析自动回落离线识别。')) return;
       try {
-        await aiSaveConfig({ endpoint: presetEl.value, model: modelEl.value.trim(), clearKey: true });
+        await aiSaveConfig({ endpoint: presetEl.value, model: getModel(), clearKey: true });
         await refreshHealth();
         setOut('', '已清除配置');
         await loadCfg();
