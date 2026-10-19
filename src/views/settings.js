@@ -104,7 +104,7 @@ export function render(root, ctx) {
         <label>接口地址（OpenAI 兼容 /chat/completions）</label>
         <input id="aiBase" placeholder="https://open.bigmodel.cn/api/paas/v4" style="width:100%">
         <label>模型</label>
-        <input id="aiModel" placeholder="glm-4-flash" style="width:100%">
+        <input id="aiModel" placeholder="glm-4.6" style="width:100%">
         <label>API Key</label>
         <input id="aiKey" type="password" placeholder="sk-..." style="width:100%">
         <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
@@ -339,7 +339,7 @@ export function render(root, ctx) {
   root.querySelector('#aiSave').onclick = () => {
     const conf = {
       base: root.querySelector('#aiBase').value.trim() || 'https://open.bigmodel.cn/api/paas/v4',
-      model: root.querySelector('#aiModel').value.trim() || 'glm-4-flash',
+      model: root.querySelector('#aiModel').value.trim() || 'glm-4.6',
       apiKey: root.querySelector('#aiKey').value.trim(),
     };
     localStorage.setItem('zx_ai_conf', JSON.stringify(conf));
@@ -360,15 +360,15 @@ export function render(root, ctx) {
   } else {
     // 云端模式：AI 在线配置（厂商预设 / Key / 测试 / 保存到服务器，即时生效）
     const CLOUD_NAMES = { zhipu: '智谱 GLM', deepseek: 'DeepSeek', tongyi: '通义千问 Qwen', kimi: 'Kimi', doubao: '豆包', hunyuan: '混元', qianfan: '千帆文心' };
-    // 每家厂商的主流模型备选（首项为主打默认），末位"自定义"支持任意型号
+    // 每家厂商的主流模型备选（2026-10 核对：首项为主打默认），末位"自定义"支持任意型号
     const CLOUD_MODELS = {
-      zhipu: ['glm-4-flash', 'glm-4-air', 'glm-4-plus', 'glm-4.5'],
+      zhipu: ['glm-4.6', 'glm-5', 'glm-4.5-air', 'glm-4.5-flash'],
       deepseek: ['deepseek-chat', 'deepseek-reasoner'],
-      tongyi: ['qwen-plus', 'qwen-turbo', 'qwen-max', 'qwen-long'],
-      kimi: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k', 'kimi-k2-turbo-preview'],
-      doubao: ['doubao-seed-1-6-flash-250815', 'doubao-1-5-pro-32k-250115', 'doubao-1-5-lite-32k-250115'],
-      hunyuan: ['hunyuan-turbos-latest', 'hunyuan-lite', 'hunyuan-standard', 'hunyuan-pro'],
-      qianfan: ['ernie-4.0-8k-latest', 'ernie-3.5-8k-latest', 'ernie-speed-8k', 'ernie-lite-8k'],
+      tongyi: ['qwen3.7-plus', 'qwen3.8-max', 'qwen3.8-flash'],
+      kimi: ['kimi-k3', 'kimi-k2.6', 'kimi-for-coding'],
+      doubao: ['doubao-seed-1-6-flash-250815', 'doubao-seed-2.0-code', 'doubao-1-5-pro-32k-250115'],
+      hunyuan: ['hunyuan-turbos-latest', 'hunyuan-pro', 'hunyuan-standard', 'hunyuan-lite'],
+      qianfan: ['ernie-5.1', 'ernie-4.0-8k-latest', 'ernie-3.5-8k-latest'],
     };
     const CUSTOM = '__custom__';
     const presetEl = root.querySelector('#aiCloudPreset');
@@ -489,7 +489,7 @@ function validateAiUrl(url) {
 
 // 国内主流大厂 OpenAI 兼容接口预设（顺序即下拉顺序，第一个为默认）
 const AI_PROVIDERS = [
-  { id: 'zhipu', name: '智谱 GLM（免费模型，默认）', base: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash', hint: 'Key 获取：open.bigmodel.cn → 控制台 → API Keys；glm-4-flash 免费，够用' },
+  { id: 'zhipu', name: '智谱 GLM', base: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4.6', hint: 'Key 获取：open.bigmodel.cn → 控制台 → API Keys' },
   { id: 'deepseek', name: 'DeepSeek 深度求索', base: 'https://api.deepseek.com/v1', model: 'deepseek-chat', hint: 'Key 获取：platform.deepseek.com → API Keys；按量计费，便宜' },
   { id: 'qwen', name: '阿里通义千问（百炼）', base: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo', hint: 'Key 获取：bailian.console.aliyun.com → API-KEY 管理' },
   { id: 'kimi', name: '月之暗面 Kimi', base: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k', hint: 'Key 获取：platform.moonshot.cn → API Key 管理' },

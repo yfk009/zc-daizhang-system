@@ -412,7 +412,7 @@ async function aiParseAll(root, ctx) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + conf.apiKey },
           body: JSON.stringify({
-            model: conf.model || 'glm-4-flash', temperature: 0,
+            model: conf.model || 'glm-4.6', temperature: 0,
             messages: [{ role: 'system', content: sys }, { role: 'user', content: tsv }],
           }),
         });

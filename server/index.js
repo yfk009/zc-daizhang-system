@@ -50,7 +50,7 @@ function endpointUrlOf(key) {
     default: return '';
   }
 }
-const AI_DEFAULT_MODEL = 'glm-4-flash';
+const AI_DEFAULT_MODEL = 'glm-4.6';
 const AI_MODEL = env('AI_MODEL', AI_DEFAULT_MODEL);
 
 // 生效配置：界面保存的 kv 配置优先，否则回落环境变量；每次请求时读取（保存后即时生效）
