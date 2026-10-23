@@ -38,7 +38,7 @@ export const DEFAULT_SETTINGS = {
   disabledTemplateKeys: [],   // 停用的模板 key（内置或自定义）
 };
 
-// 数据迁移：v2 = 代账4.0 五档口径（S1–S5 + 纳税人身份 + 5 角色）
+// 数据迁移：v2 = 代账4.0 五档口径（S1–S5 + 纳税人身份 + 5 角色）；v3 = 负责人多人体（owners 数组）
 const SCHEMA_KEY = 'zx_schema_version';
 async function migrateV2() {
   if (localStorage.getItem(SCHEMA_KEY) === '2') return;
@@ -63,8 +63,24 @@ async function migrateV2() {
   if (changed) console.log(`[migrate] v2 五档口径：已迁移 ${changed} 家客户`);
 }
 
+// v3：每位客户补 owners 负责团队数组（首位=主负责人，与 owner 字段互为同步）
+async function migrateV3() {
+  if (localStorage.getItem(SCHEMA_KEY) === '3') return;
+  const customers = await store.list('customers');
+  let changed = 0;
+  for (const c of customers) {
+    if (!Array.isArray(c.owners)) c.owners = c.owner ? [c.owner] : [];
+    if (c.owners.length && c.owner !== c.owners[0]) c.owner = c.owners[0];
+    await store.upsert('customers', c);
+    changed++;
+  }
+  localStorage.setItem(SCHEMA_KEY, '3');
+  console.log(`[migrate] v3 负责人多人体：已规范化 ${changed} 家客户`);
+}
+
 export async function loadAll() {
   await migrateV2();
+  await migrateV3();
   const s = await store.list('settings');
   state.settings = s.find(x => x._id === 'settings_main') || { ...DEFAULT_SETTINGS };
   for (const k of Object.keys(DEFAULT_SETTINGS)) {

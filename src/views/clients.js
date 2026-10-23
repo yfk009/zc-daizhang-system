@@ -7,6 +7,7 @@ import { inferTier, TIERS, TIER_ORDER } from '../templates.js';
 let curTier = '';
 let q = '';
 let editId = null;
+let editOwners = []; // 编辑中的负责团队（首位=主负责人）
 
 export function render(root, ctx) {
   const list = state.customers.filter(c =>
@@ -30,13 +31,14 @@ export function render(root, ctx) {
     <table><thead><tr><th>客户名称</th><th>档位</th><th>纳税人身份</th><th>年营业额</th><th>月记账费</th><th>年记账费</th><th>负责人</th><th>合同到期</th><th>操作</th></tr></thead>
     <tbody>${list.map(c => {
       const tt = c.taxpayerType === 'general' ? '一般纳税人' : (c.taxpayerType === 'small' ? '小规模' : '未设置');
+      const owners = Array.isArray(c.owners) && c.owners.length ? c.owners : (c.owner ? [c.owner] : []);
       return `<tr><td>${esc(c.name)}${c.archived ? ' <span class="st todo">已归档</span>' : ''}</td>
       <td><span class="tag ${c.tier}">${c.tier}${c.tierManual ? '·手' : ''}</span></td>
       <td>${tt}</td>
       <td>${c.revenue ? c.revenue.toLocaleString() : '—'}</td>
       <td>${c.monthlyFee ? '¥' + c.monthlyFee.toLocaleString() : '—'}</td>
       <td>${c.annualFee ? '¥' + c.annualFee.toLocaleString() : '—'}</td>
-      <td>${esc(c.owner || '')}</td><td>${c.contractEnd || '—'}</td>
+      <td>${owners.length ? owners.map(esc).join('、') : '<span class="muted">未指定</span>'}</td><td>${c.contractEnd || '—'}</td>
       <td><button class="btn sm ghost" data-edit="${c._id}">编辑</button></td></tr>`;
     }).join('')}</tbody></table>
     <div class="muted" style="margin-top:8px">档位规则（4.0 五档）：零申报→S1 托管；小规模有经营→S2；一般纳税人按年营业额 ≤500万→S3、500–1000万→S4、1000–3000万→S5，一口价无折扣。营业额缺失时按 纳税人身份→记账费档位→默认零申报 自动判档。每年 1 月按上年营业额统一重划，个案可手动调档（标"手"）；调档后下月任务按新档生成。</div>
@@ -56,7 +58,8 @@ export function render(root, ctx) {
 
 function openEdit(id, ctx) {
   editId = id;
-  const c = id ? state.customers.find(x => x._id === id) : { name: '', taxNo: '', tier: 'S2', taxpayerType: 'small', revenue: '', annualFee: '', monthlyFee: '', contact: '', phone: '', owner: '', contractStart: '', contractEnd: '', tierManual: false, archived: false };
+  const c = id ? state.customers.find(x => x._id === id) : { name: '', taxNo: '', tier: 'S2', taxpayerType: 'small', revenue: '', annualFee: '', monthlyFee: '', contact: '', phone: '', owner: '', owners: [], contractStart: '', contractEnd: '', tierManual: false, archived: false };
+  editOwners = Array.isArray(c.owners) && c.owners.length ? [...c.owners] : (c.owner ? [c.owner] : []);
   document.getElementById('cTitle').textContent = id ? '编辑客户' : '新增客户';
   const F = (k, label, type = 'text') => `<label style="margin:8px 0 4px;display:block">${label}</label><input id="cf_${k}" type="${type}" value="${c[k] ?? ''}" style="width:100%">`;
   document.getElementById('cForm').innerHTML = `
@@ -77,12 +80,19 @@ function openEdit(id, ctx) {
     <label style="margin:8px 0 4px;display:block">月记账费（自动核算 = 年记账费 ÷ 12）</label>
     <input id="cf_monthly" type="number" readonly style="width:100%;background:#f8fafc;color:#475569">
     ${F('contact', '联系人')}${F('phone', '联系电话')}
-    <label style="margin:8px 0 4px;display:block">负责人（服务会计，日常任务「谁服务谁做」时按此派单）</label>
-    <select id="cf_owner" style="width:100%">
-      <option value="">（未指定）</option>
-      ${state.settings.staff.map(p => `<option ${c.owner === p.name ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-      ${c.owner && !state.settings.staff.some(p => p.name === c.owner) ? `<option selected>${esc(c.owner)}</option>` : ''}
-    </select>
+    <label style="margin:8px 0 4px;display:block">负责团队（可多人；首位为主负责人，任务「谁服务谁做」按主负责人派单）</label>
+    <div id="cf_ownerChips" style="display:flex;flex-wrap:wrap;gap:6px;min-height:26px"></div>
+    <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;align-items:center">
+      <select id="cf_ownerSel" style="flex:1;min-width:120px">
+        <option value="">从团队选择…</option>
+        ${state.settings.staff.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('')}
+      </select>
+      <button class="btn ghost sm" id="cf_ownerSelAdd" type="button">＋加入</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+      <input id="cf_ownerInput" placeholder="手动添加人员姓名（回车或点按钮，如外协/新同事）" style="flex:1">
+      <button class="btn ghost sm" id="cf_ownerAdd" type="button">＋手动添加</button>
+    </div>
     ${F('contractStart', '合同开始（YYYY-MM-DD）', 'date')}${F('contractEnd', '合同到期（YYYY-MM-DD）', 'date')}
     <div class="switch"><input type="checkbox" id="cf_arch" ${c.archived ? 'checked' : ''}><span>归档（退出服务，不再生成任务）</span></div>`;
   const syncMonthly = () => {
@@ -91,6 +101,37 @@ function openEdit(id, ctx) {
   };
   syncMonthly();
   document.getElementById('cf_annualFee').oninput = syncMonthly;
+  // 负责团队：chips 渲染 + 团队下拉加入 + 手动添加
+  function drawOwnerChips() {
+    const box = document.getElementById('cf_ownerChips');
+    if (!box) return;
+    box.innerHTML = editOwners.length
+      ? editOwners.map((n, i) => `<span style="display:inline-flex;align-items:center;gap:6px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:999px;padding:3px 10px;font-size:13px">${esc(n)}${i === 0 ? '<b style="color:#1d4ed8;font-size:11px">主</b>' : ''}<a href="javascript:void(0)" data-od="${i}" style="color:#b91c1c;text-decoration:none;font-weight:bold">×</a></span>`).join('')
+      : '<span class="muted" style="font-size:13px">（暂无，添加后保存生效）</span>';
+    box.querySelectorAll('[data-od]').forEach(a => a.onclick = () => { editOwners.splice(+a.dataset.od, 1); drawOwnerChips(); });
+  }
+  function addOwner(raw) {
+    const name = (raw || '').trim();
+    if (!name) return;
+    if (editOwners.includes(name)) { toast(name + ' 已在负责团队中'); return; }
+    editOwners.push(name);
+    drawOwnerChips();
+  }
+  drawOwnerChips();
+  document.getElementById('cf_ownerSelAdd').onclick = () => {
+    const sel = document.getElementById('cf_ownerSel');
+    if (!sel.value) { toast('请先在下拉中选择团队成员'); return; }
+    addOwner(sel.value);
+    sel.value = '';
+  };
+  document.getElementById('cf_ownerAdd').onclick = () => {
+    const inp = document.getElementById('cf_ownerInput');
+    addOwner(inp.value);
+    inp.value = '';
+  };
+  document.getElementById('cf_ownerInput').onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); addOwner(e.target.value); e.target.value = ''; }
+  };
   document.getElementById('cMask').classList.add('on');
 }
 
@@ -106,7 +147,9 @@ async function save() {
     revenue: parseFloat(v('revenue')) || 0,
     annualFee,
     monthlyFee: annualFee > 0 ? Math.round(annualFee / 12 * 100) / 100 : 0,
-    contact: v('contact'), phone: v('phone'), owner: v('owner'),
+    contact: v('contact'), phone: v('phone'),
+    owners: editOwners.slice(),
+    owner: editOwners[0] || '',
     contractStart: v('contractStart'), contractEnd: v('contractEnd'),
     archived: document.getElementById('cf_arch').checked,
   });
@@ -118,7 +161,10 @@ async function save() {
     c.tierReason = judged.reason;
   }
   const omv = c.tier === 'S1' ? state.settings.ownersMap.assist : state.settings.ownersMap.lead;
-  if (!c.owner) c.owner = (omv && !String(omv).startsWith('__')) ? omv : '';
+  if (!c.owner) {
+    const o = (omv && !String(omv).startsWith('__')) ? omv : '';
+    if (o) { c.owner = o; c.owners = [o]; }
+  }
   if (!c.ownerRole) c.ownerRole = c.tier === 'S1' ? 'assist' : 'lead';
   await store.upsert('customers', c);
   await loadAll();
