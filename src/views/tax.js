@@ -2,8 +2,11 @@
 import { el, esc, toast } from '../ui.js';
 import { state, reloadMonth, taxOf, finOf, prevDataMonth, getUser } from '../app-state.js';
 import { store } from '../db.js';
+import { OTHER_TAXES, othersSum } from '../taxkit.js';
 
 let editClient = null;
+// 弹窗内「其他税种」临时编辑副本（点保存才写回 tc.amounts.others）
+let mOthers = [];
 
 export function render(root, ctx) {
   const actives = state.customers.filter(c => !c.archived && c.tier !== 'S1')
@@ -21,14 +24,16 @@ export function render(root, ctx) {
   <div class="panel">
     <h3>💰 ${state.month} 税金确认跟踪（S2–S5 共 ${actives.length} 户）</h3>
     <table id="taxTable"><thead><tr>
-      <th>客户</th><th>档位</th><th>增值税</th><th>附加税</th><th>个税</th><th>企税预缴</th><th>合计应缴</th><th>状态</th><th>确认信息</th><th style="width:230px">操作</th>
+      <th>客户</th><th>档位</th><th>增值税</th><th>附加税</th><th>个税</th><th>企税预缴</th><th>印花税</th><th style="min-width:180px">其他税种</th><th>合计应缴</th><th>状态</th><th>确认信息</th><th style="width:230px">操作</th>
     </tr></thead><tbody>
     ${actives.map(c => rowHtml(c, dm)).join('')}
     </tbody></table>
+    <div class="muted" style="margin-top:10px">💡 印花税与其它税项经「录入金额」弹窗填写；「其他税种」列可在行内下拉添加（可多项），金额改完自动并入合计应缴；已确认行锁定不可改。</div>
   </div>
   <div class="modal-mask" id="taxMask"><div class="modal">
     <h3>✏️ 录入税金金额</h3><div class="info" id="tmInfo"></div>
     <div id="tmInputs"></div>
+    <div id="tmOthers"></div>
     <div class="acts">
       <button class="btn ghost" id="tmCancel">取消</button>
       <button class="btn" id="tmSave">保存</button>
@@ -36,14 +41,92 @@ export function render(root, ctx) {
   </div></div>`;
 
   root.querySelectorAll('button[data-act]').forEach(b => b.onclick = () => act(b.dataset, ctx));
+  wireInlineOthers(root);
   root.querySelector('#tmCancel').onclick = () => root.querySelector('#taxMask').classList.remove('on');
   root.querySelector('#tmSave').onclick = saveAmounts;
+}
+
+/* ---------- 其他税种：行内下拉添加/删除/改额，自动并入合计 ---------- */
+function othersCellHtml(c, tc, locked) {
+  const a = (tc && tc.amounts) || null;
+  const others = (a && a.others) || [];
+  const opts = OTHER_TAXES.filter(n => !others.find(o => o.name === n));
+  const sel = `<select class="otadd" data-id="${c._id}" ${locked || !opts.length ? 'disabled' : ''}>
+    <option value="">＋ 其他税种</option>${opts.map(n => `<option>${n}</option>`).join('')}</select>`;
+  if (locked) {
+    return others.length
+      ? others.map(o => `<div class="otrow"><span class="otname">${esc(o.name)}</span><span class="otamt-txt">${o.amt ? '¥' + (+o.amt).toLocaleString() : '—'}</span></div>`).join('')
+      : '<span class="muted">—</span>';
+  }
+  const rows = others.map((o, i) => `<div class="otrow" data-i="${i}">
+      <span class="otname">${esc(o.name)}</span>
+      <input class="otamt" type="number" data-id="${c._id}" data-i="${i}" value="${o.amt ?? ''}" placeholder="元">
+      <button class="otdel" data-id="${c._id}" data-i="${i}" title="删除">✕</button>
+    </div>`).join('');
+  return rows + sel;
+}
+
+function wireInlineOthers(root) {
+  // 下拉选中 → 加入该户（自动建档、并入合计、即时保存）
+  root.querySelectorAll('#taxTable select.otadd').forEach(sel => sel.onchange = async () => {
+    const name = sel.value; if (!name) return;
+    const c = state.customers.find(x => x._id === sel.dataset.id);
+    if (!c) return;
+    const tc = ensureTax(c);
+    if (!tc.amounts) tc.amounts = { vat: 0, sur: 0, it: 0, cit: 0, stamp: 0, total: 0, others: [] };
+    tc.amounts.others = tc.amounts.others || [];
+    if (!tc.amounts.others.find(o => o.name === name)) tc.amounts.others.push({ name, amt: 0 });
+    if (tc.state === 'draft') tc.state = 'ready';
+    await store.upsert('taxConfirm', tc);
+    await reloadMonth();
+    render(document.getElementById('view'), window.__ctx);
+    toast(`${name} 已添加，请填金额`);
+  });
+  // 金额改动 → 差额并入合计应缴，就地更新不整页刷
+  root.querySelectorAll('#taxTable input.otamt').forEach(inp => inp.onchange = async () => {
+    const tc = taxOf(inp.dataset.id);
+    const o = ((tc && tc.amounts && tc.amounts.others) || [])[+inp.dataset.i];
+    if (!o) return;
+    const old = +o.amt || 0, nv = parseFloat(inp.value) || 0;
+    o.amt = nv;
+    tc.amounts.total = Math.max(0, (+tc.amounts.total || 0) - old + nv);
+    await store.upsert('taxConfirm', tc);
+    const td = inp.closest('tr').querySelector('.taxtotal');
+    if (td) td.textContent = '¥' + Number(tc.amounts.total).toLocaleString();
+    toast(`${o.name} 已并入合计`);
+  });
+  // ✕ 删除 → 扣回合计；若删完全空则回退草稿态
+  root.querySelectorAll('#taxTable button.otdel').forEach(btn => btn.onclick = async () => {
+    const tc = taxOf(btn.dataset.id);
+    if (!tc || !tc.amounts) return;
+    const i = +btn.dataset.i, arr = tc.amounts.others || [];
+    const o = arr[i]; if (!o) return;
+    const old = +o.amt || 0;
+    arr.splice(i, 1);
+    tc.amounts.total = Math.max(0, (+tc.amounts.total || 0) - old);
+    maybeResetAmounts(tc);
+    await store.upsert('taxConfirm', tc);
+    await reloadMonth();
+    render(document.getElementById('view'), window.__ctx);
+    toast(`${o.name} 已移除`);
+  });
+}
+
+// 全空（且非金蝶合计-only）则回退草稿、amounts 置空
+function maybeResetAmounts(tc) {
+  if (tc.sentAt || tc.state === 'confirmed') return;
+  const a = tc.amounts || {};
+  if ((a.others || []).length) return;
+  if (+a.vat || +a.sur || +a.it || +a.cit || +a.stamp || +a.total) return;
+  tc.amounts = null;
+  if (tc.state === 'ready') tc.state = 'draft';
 }
 
 function rowHtml(c, dm) {
   const tc = taxOf(c._id);
   const fin = finOf(c._id, dm);
   const a = (tc && tc.amounts) || null;
+  const locked = tc && tc.state === 'confirmed';
   const total = a ? a.total : (fin ? fin.taxTotal : null);
   const importTag = (!a && fin && fin.taxTotal) ? '<div class="muted">↳ 金蝶导入合计</div>' : '';
   let stHtml, acts = [];
@@ -71,7 +154,9 @@ function rowHtml(c, dm) {
     <td>${a && a.sur ? '¥' + a.sur.toLocaleString() : '—'}</td>
     <td>${a && a.it ? '¥' + a.it.toLocaleString() : '—'}</td>
     <td>${a && a.cit ? '¥' + a.cit.toLocaleString() : '—'}</td>
-    <td><b style="color:#b91c1c">${total != null ? '¥' + Number(total).toLocaleString() : '—'}</b>${importTag}</td>
+    <td>${a && a.stamp ? '¥' + a.stamp.toLocaleString() : '—'}</td>
+    <td class="otcell">${othersCellHtml(c, tc, locked)}</td>
+    <td><b class="taxtotal" style="color:#b91c1c">${total != null ? '¥' + Number(total).toLocaleString() : '—'}</b>${importTag}</td>
     <td>${stHtml}</td><td class="muted">${confInfo}</td><td>${acts.join(' ')}</td></tr>`;
 }
 
@@ -135,29 +220,75 @@ function openConfirmDialog(c, tc, presetNote) {
   };
 }
 
+function updateModalTotal() {
+  const s = ['vat', 'sur', 'it', 'cit', 'stamp'].reduce((acc, k) => {
+    const inp = document.getElementById('amt_' + k);
+    return acc + (inp ? (parseFloat(inp.value) || 0) : 0);
+  }, 0) + othersSum({ others: mOthers });
+  const t = document.getElementById('amt_total');
+  if (t) t.value = s || '';
+}
+
+function drawModalOthers() {
+  const box = document.getElementById('tmOthers');
+  if (!box) return;
+  const opts = OTHER_TAXES.filter(n => !mOthers.find(o => o.name === n));
+  box.innerHTML = `<label style="margin:8px 0 4px;display:block">其他税种（下拉添加，可多项）</label>` +
+    mOthers.map((o, i) => `
+      <div class="otrow">
+        <span class="otname">${esc(o.name)}</span>
+        <input class="otamt" type="number" data-i="${i}" value="${o.amt ?? ''}" placeholder="元">
+        <button class="otdel" type="button" data-i="${i}">✕</button>
+      </div>`).join('') + `
+    <select id="otAddSel" style="margin-top:6px;width:100%">
+      <option value="">＋ 添加其他税种…</option>
+      ${opts.map(n => `<option>${n}</option>`).join('')}
+    </select>`;
+  // 金额输入 → 更新副本并刷新合计建议
+  box.querySelectorAll('input.otamt').forEach(inp => inp.oninput = () => {
+    const o = mOthers[+inp.dataset.i]; if (!o) return;
+    o.amt = parseFloat(inp.value) || 0;
+    updateModalTotal();
+  });
+  // ✕ 移除 → 重绘 + 刷新合计
+  box.querySelectorAll('button.otdel').forEach(btn => btn.onclick = () => {
+    mOthers.splice(+btn.dataset.i, 1);
+    drawModalOthers();
+    updateModalTotal();
+  });
+  // 下拉添加 → 重绘 + 刷新合计
+  const sel = box.querySelector('#otAddSel');
+  if (sel) sel.onchange = () => {
+    const name = sel.value; if (!name) return;
+    mOthers.push({ name: name, amt: 0 });
+    drawModalOthers();
+    updateModalTotal();
+  };
+}
+
 function openEdit(c) {
   editClient = c;
   const tc = taxOf(c._id);
-  const a = (tc && tc.amounts) || { vat: '', sur: '', it: '', cit: '', total: '' };
+  const a = (tc && tc.amounts) || { vat: '', sur: '', it: '', cit: '', stamp: '', total: '' };
+  mOthers = ((tc && tc.amounts && tc.amounts.others) || []).map(o => ({ name: o.name, amt: o.amt }));
   document.getElementById('tmInfo').innerHTML = `客户：<b>${esc(c.name)}</b> ｜ ${c.tier} ｜ 服务月 ${state.month}`;
-  document.getElementById('tmInputs').innerHTML = ['vat|增值税', 'sur|城建税及附加', 'it|个人所得税', 'cit|企业所得税（预缴）', 'total|合计应缴'].map(f => {
+  document.getElementById('tmInputs').innerHTML = ['vat|增值税', 'sur|城建税及附加', 'it|个人所得税', 'cit|企业所得税（预缴）', 'stamp|印花税', 'total|合计应缴'].map(f => {
     const [k, label] = f.split('|');
     return `<label style="margin:8px 0 4px">${label}（元）</label><input type="number" id="amt_${k}" value="${a[k] ?? ''}" style="width:100%">`;
-  }).join('') + `<div class="muted" style="margin-top:8px">提示：合计=四项之和可自动算；金蝶导入的税金合计可在「数据导入」带入。</div>`;
+  }).join('') + `<div class="muted" style="margin-top:8px">提示：合计=各项之和可自动算；金蝶导入的税金合计可在「数据导入」带入。</div>`;
   document.getElementById('taxMask').classList.add('on');
   // 自动求和
-  ['vat','sur','it','cit'].forEach(k => {
-    document.getElementById('amt_' + k).oninput = () => {
-      const s = ['vat','sur','it','cit'].reduce((acc, kk) => acc + (parseFloat(document.getElementById('amt_'+kk).value) || 0), 0);
-      document.getElementById('amt_total').value = s || '';
-    };
+  ['vat','sur','it','cit','stamp'].forEach(k => {
+    document.getElementById('amt_' + k).oninput = updateModalTotal;
   });
+  drawModalOthers();
 }
 async function saveAmounts() {
   if (!editClient) return;
   const tc = ensureTax(editClient);
   tc.amounts = {};
-  ['vat','sur','it','cit','total'].forEach(k => { tc.amounts[k] = parseFloat(document.getElementById('amt_' + k).value) || 0; });
+  ['vat','sur','it','cit','stamp','total'].forEach(k => { tc.amounts[k] = parseFloat(document.getElementById('amt_' + k).value) || 0; });
+  tc.amounts.others = mOthers.filter(o => o.name);
   if (!tc.amounts.total) { document.getElementById('taxMask').classList.remove('on'); toast('请填写合计金额'); return; }
   if (tc.state === 'draft') tc.state = 'ready';
   await store.upsert('taxConfirm', tc);

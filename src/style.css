@@ -42,7 +42,7 @@ main { padding:18px 22px 60px; max-width:1320px; margin:0 auto; width:100%; flex
 .tiercard .p { margin-top:9px; font-size:12.5px; line-height:1.7; }
 
 table { width:100%; border-collapse:collapse; font-size:13px; min-width:880px; }
-#taxTable { min-width:1120px; }
+#taxTable { min-width:1340px; }
 #taskTable { min-width:980px; }
 td .btn { margin:2px 5px 2px 0; }
 th { text-align:left; padding:8px 9px; background:#f8fafc; color:#64748b; font-weight:500; border-bottom:1px solid #e2e8f0; white-space:nowrap; }
@@ -151,6 +151,17 @@ label { font-size:12px; color:#64748b; display:block; margin:9px 0 4px; }
 .paper .row { display:flex; justify-content:space-between; align-items:center; padding:7px 4px; border-bottom:1px dashed #e2e8f0; font-size:13px; gap:8px; }
 .paper .total { display:flex; justify-content:space-between; padding:10px 4px; font-size:14.5px; font-weight:700; color:#b91c1c; }
 .paper .row input, .mini-input { border:1px solid #e2e8f0; border-radius:6px; padding:4px 8px; font-size:13px; width:130px; text-align:right; }
+
+/* 税金页 其他税种下拉列（行内添加/金额/移除） */
+.otcell { white-space:nowrap; }
+.otrow { display:flex; align-items:center; margin:2px 0; }
+.otname { font-size:12px; color:#334155; margin-right:6px; white-space:nowrap; }
+.otadd, .otamt { border:1px solid #e2e8f0; border-radius:6px; padding:3px 6px; font-size:12px; text-align:right; }
+.otadd { text-align:left; max-width:150px; }
+.otamt { width:86px; }
+.otdel { border:0; background:transparent; color:#94a3b8; cursor:pointer; padding:0 5px; font-size:12px; }
+.otdel:hover { color:#dc2626; }
+.otamt-txt { font-weight:600; }
 .paper table input { border:1px solid #e2e8f0; border-radius:6px; padding:4px 8px; font-size:12.5px; width:95px; text-align:right; }
 .msgbox { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:13px 15px; font-size:13.5px; line-height:1.9; color:#166534; }
 .copybar { margin-top:13px; display:flex; flex-wrap:wrap; }
@@ -197,7 +208,7 @@ input[type=checkbox] { accent-color:#2563eb; width:15px; height:15px; }
   nav button { padding:11px 10px; font-size:12.5px; }
   .paper { padding:16px 14px; }
   table { min-width:720px; }
-  #taxTable { min-width:980px; }
+  #taxTable { min-width:1150px; }
   .weekrow .wl { width:128px; font-size:11.5px; }
   .weekrow .pct { width:84px; font-size:11.5px; }
 }

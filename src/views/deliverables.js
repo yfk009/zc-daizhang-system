@@ -3,6 +3,7 @@
 import { esc, toast, fmt, prevMonth } from '../ui.js';
 import { state, reloadMonth, taxOf, finOf, prevDataMonth } from '../app-state.js';
 import { store } from '../db.js';
+import { OTHER_TAXES, othersSum } from '../taxkit.js';
 
 const TYPES = [
   { k: 'urge', label: '💬 催票话术' },
@@ -79,13 +80,21 @@ function urgeHtml(c, m) {
 function taxHtml(c, m) {
   const tc = taxOf(c._id);
   const a = (tc && tc.amounts) || null;
-  const vals = a || { vat: m.vat, sur: m.sur, it: m.it, cit: m.cit, total: m.total };
+  const formal = !!a;
+  const others = formal ? (a.others || []) : (m.otherList || []);
+  const vals = a || { vat: m.vat, sur: m.sur, it: m.it, cit: m.cit, stamp: m.stamp, total: m.total };
+  const opts = OTHER_TAXES.filter(n => !others.find(o => o.name === n));
   const warn = !a ? '<div class="banner" style="margin:0 0 12px">该户尚未在「税金确认」页正式录入金额——以下可先手工填写出图，正式确认请回税金确认页录入。</div>' : '';
   return `${warn}<h2>🧾 ${state.month} 税金确认单</h2><div class="sub">${esc(c.name)} · 请回复"确认"后我们再申报</div>
   ${numInput('vat', vals.vat, '增值税')}
   ${numInput('sur', vals.sur, '城建税及教育费附加')}
   ${numInput('it', vals.it, '个人所得税')}
   ${numInput('cit', vals.cit, '企业所得税（预缴）')}
+  ${numInput('stamp', vals.stamp, '印花税')}
+  ${others.map((o, i) => formal
+    ? `<div class="row"><span>${esc(o.name)}</span><span><b>¥${fmt(o.amt || 0)}</b></span></div>`
+    : `<div class="row"><span>${esc(o.name)}</span><span><input class="mini-input" data-m="othAmt_${i}" type="number" value="${o.amt ?? ''}" placeholder="手工录入"> <button class="btn sm ghost" data-othdel="${i}" type="button">✕ 移除</button></span></div>`).join('')}
+  ${formal ? '' : `<div class="row"><span>其他税种（下拉添加）</span><select class="othadd" data-c="${c._id}"><option value="">＋ 添加…</option>${opts.map(n => `<option>${n}</option>`).join('')}</select></div>`}
   <div class="total"><span>本月合计应缴</span><span id="taxTotalShow">¥${fmt(vals.total || 0)}</span></div>
   <div class="msgbox" style="margin-top:14px">温馨提示：请确保扣款账户余额充足。回复"确认"即视为同意按此金额申报缴款；如对金额有疑问，请随时电话沟通。</div>
   <div class="copybar">
@@ -159,22 +168,45 @@ function varianceHtml(c, m, fin, dm) {
 }
 
 /* ---------- 事件 ---------- */
+// 确认单合计 = 五项明细 + 其他税种之和
+function dlvTaxTotal(m) {
+  return ['vat', 'sur', 'it', 'cit', 'stamp'].reduce((s, k) => s + (+m[k] || 0), 0) + othersSum({ others: m.otherList });
+}
+
 function wire(root, ctx, c) {
   const paper = root.querySelector('#dlvPaper');
   paper.querySelectorAll('input[data-m]').forEach(inp => inp.onchange = () => {
     const m = manual[c._id] || (manual[c._id] = {});
-    m[inp.dataset.m] = parseFloat(inp.value) || 0;
+    const k = inp.dataset.m;
+    if (k.startsWith('othAmt_')) {
+      const i = +k.slice(7);
+      if (m.otherList && m.otherList[i]) m.otherList[i].amt = parseFloat(inp.value) || 0;
+    } else {
+      m[k] = parseFloat(inp.value) || 0;
+    }
     // 联动显示
-    if (inp.dataset.m === 'brief_rev' || inp.dataset.m === 'brief_cost') {
+    if (k === 'brief_rev' || k === 'brief_cost') {
       const p = document.getElementById('briefProfit');
       if (p) p.textContent = '¥' + fmt((m.brief_rev || 0) - (m.brief_cost || 0));
     }
     const t = document.getElementById('taxTotalShow');
-    if (t && ['vat','sur','it','cit'].includes(inp.dataset.m)) {
-      t.textContent = '¥' + fmt(['vat','sur','it','cit'].reduce((acc, k) => acc + (m[k] || 0), 0));
+    if (t && (['vat', 'sur', 'it', 'cit', 'stamp'].includes(k) || k.startsWith('othAmt_'))) {
+      t.textContent = '¥' + fmt(dlvTaxTotal(m));
     }
   });
-  paper.querySelectorAll('button[data-w]').forEach(b => b.onclick = () => doAction(b.dataset.w, c, ctx, root));
+  // 其他税种：下拉添加 / ✕ 移除（仅手工路径，改后重绘确认单）
+  paper.querySelectorAll('select.othadd').forEach(sel => sel.onchange = () => {
+    const m = manual[c._id] || (manual[c._id] = {});
+    const name = sel.value; if (!name) return;
+    m.otherList = m.otherList || [];
+    if (!m.otherList.find(o => o.name === name)) m.otherList.push({ name: name, amt: 0 });
+    draw(root, ctx);
+  });
+  paper.querySelectorAll('button[data-othdel]').forEach(btn2 => btn2.onclick = () => {
+    const m = manual[c._id] || (manual[c._id] = {});
+    if (m.otherList) m.otherList.splice(+btn2.dataset.othdel, 1);
+    draw(root, ctx);
+  });
 }
 
 async function doAction(w, c, ctx, root) {

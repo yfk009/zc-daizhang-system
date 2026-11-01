@@ -104,5 +104,11 @@ const modeCross = buildMonthTasks('2026-09',
   { ...ownersMap, reviewer: '__cross' }, { crossMap: { '会计甲': '会计乙' } });
 eq('S1 批量巡检（无单一客户）回落审核会计占位', modeCross.find(d => d.key === 's1_patrol').owner, '审核会计');
 
+// 8) 税种目录与税金合计逻辑（taxkit，2026-11-01 税金页加列）
+import { OTHER_TAXES, othersSum, partsSum } from '../src/taxkit.js';
+eq('其他税种目录 ≥18 项（含房产税/残保金/工会经费）', OTHER_TAXES.length >= 18 ? 'yes' : 'no', 'yes');
+eq('其他税种求和（非法金额按 0）', othersSum({ others: [{ name: '房产税', amt: 300 }, { name: '残保金', amt: 'x' }] }), 300);
+eq('六项明细合计（不含 total 字段、含其他税种）', partsSum({ vat: 100, sur: 12, it: 0, cit: 0, stamp: 8, total: 999, others: [{ name: '工会经费', amt: 50 }] }), 170);
+
 console.log(`\n结果：${pass} 通过，${fail} 失败`);
 process.exit(fail ? 1 : 0);
