@@ -40,7 +40,7 @@ export async function render(root, ctx) {
     <div class="card"><div class="k">本月任务完成</div><div class="v">${done}<small> / ${total} 项</small></div></div>
     <div class="card good"><div class="k">已完成申报</div><div class="v">${filedDone}<small> / ${filedTotal} 户</small></div></div>
     <div class="card"><div class="k">税金确认（${actives.length} 经营户）</div><div class="v">${confirmed}<small> / ${actives.length} 户</small></div></div>
-    <div class="card ${bads.length ? 'warn' : ''}"><div class="k">逾期 / 受阻 / 问题</div><div class="v">${bads.length}<small> 项</small></div>${ackN ? `<div class="muted" style="font-size:11px;margin-top:4px">另有 ${ackN} 条逾期已手动确认</div>` : ''}</div>
+    <div class="card ${bads.length ? 'warn' : ''}"><div class="k">逾期 / 受阻 / 问题</div><div class="v">${bads.length}<small> 项</small></div>${ackN ? `<div class="muted" style="font-size:11px;margin-top:4px">另有 ${ackN} 条已手动调整状态</div>` : ''}</div>
   </div>
   <div class="tiers">
     <div class="tiercard all"><div class="n">${totalActive} 家</div><div class="d">全部家数 · 在服客户</div><div class="p">全部任务完成 <b>${total ? Math.round(done / total * 100) : 0}%</b>（${done}/${total} 项）</div></div>
@@ -55,9 +55,9 @@ export async function render(root, ctx) {
   </div>
   <div class="panel">
     <h3 style="display:flex;justify-content:space-between;align-items:center;gap:8px">⏰ 逾期 / 受阻 / 问题（点击跳转处理）
-      <button class="btn sm ghost" id="ackAllBtn" style="white-space:nowrap">✋ 一键确认全部逾期</button></h3>
+      <button class="btn sm ghost" id="ackAllBtn" style="white-space:nowrap">✅ 一键确认服务</button></h3>
     <table><thead><tr><th>客户</th><th>任务</th><th>档位</th><th>责任人</th><th>状态</th><th>说明</th><th>操作</th></tr></thead>
-    <tbody>${bads.slice(0, 20).map(t => { const [cl, txt] = vstate(t); return `<tr class="${cl}" style="cursor:pointer" data-jump="${esc(t.name)}"><td>${esc(t.clientName)}</td><td>${esc(t.name)}</td><td><span class="tag ${t.tier}">${t.tier}</span></td><td onclick="event.stopPropagation()"><select data-oid="${t._id}" style="max-width:110px">${ownerOptions(t.owner)}</select></td><td><span class="st ${cl}">${txt}</span></td><td class="muted">${t.state === 'issue' ? esc(t.note || '') : (cl === 'blocked' ? '税金未确认，申报受阻' : '已逾期，需今日处理')}</td><td onclick="event.stopPropagation()">${cl === 'overdue' ? `<button class="btn sm ghost" data-ack="${t._id}" style="white-space:nowrap">✋ 确认</button>` : '<span class="muted">—</span>'}</td></tr>`; }).join('') || '<tr><td colspan="7" class="muted" style="text-align:center;padding:16px">🎉 本月无逾期、无受阻——主动服务节奏保持得很好</td></tr>'}</tbody></table>
+    <tbody>${bads.slice(0, 20).map(t => { const [cl, txt] = vstate(t); return `<tr class="${cl}" style="cursor:pointer" data-jump="${esc(t.name)}"><td>${esc(t.clientName)}</td><td>${esc(t.name)}</td><td><span class="tag ${t.tier}">${t.tier}</span></td><td onclick="event.stopPropagation()"><select data-oid="${t._id}" style="max-width:110px">${ownerOptions(t.owner)}</select></td><td><span class="st ${cl}">${txt}</span></td><td class="muted">${t.state === 'issue' ? esc(t.note || '') : (cl === 'blocked' ? '税金未确认，申报受阻' : '已逾期，需今日处理')}</td><td onclick="event.stopPropagation()">${cl === 'overdue' ? `<button class="btn sm ghost" data-ack="${t._id}" style="white-space:nowrap">✅ 确认服务</button>` : '<span class="muted">—</span>'}</td></tr>`; }).join('') || '<tr><td colspan="7" class="muted" style="text-align:center;padding:16px">🎉 本月无逾期、无受阻——主动服务节奏保持得很好</td></tr>'}</tbody></table>
   </div>
   <div class="panel">
     <h3>📈 四周节奏进度</h3>
@@ -70,9 +70,9 @@ export async function render(root, ctx) {
     }).join('')}
   </div>
   <div class="modal-mask" id="ackMask"><div class="modal">
-    <h3>✋ 一键确认全部逾期</h3>
+    <h3>✅ 一键确认服务</h3>
     <div class="info" id="ackInfo"></div>
-    <p class="muted" style="font-size:12.5px;margin:8px 0 14px">确认后这些任务显示为「🟣 逾期已确认」，不再计入上方逾期预警与问题表；已完成的工作请正常打勾，误确认的可随时在「任务清单」页撤销恢复提醒。</p>
+    <p class="muted" style="font-size:12.5px;margin:8px 0 14px">将把这些逾期任务手动确认为「已完成（服务已做）」，立即退出逾期预警与问题表；登记来源为「手动确认服务」，可与正常打勾区分。状态也可在「任务清单」页逐条手动调整。</p>
     <div class="acts">
       <button class="btn ghost" id="ackCancel">取消</button>
       <button class="btn" id="ackOk">确认执行</button>
@@ -80,30 +80,31 @@ export async function render(root, ctx) {
   </div></div>`;
   const overs = bads.filter(t => vstate(t)[0] === 'overdue');
   const me = getUser()?.name || '未知';
+  const today = new Date().toISOString().slice(0, 10);
   root.querySelector('#ackAllBtn').onclick = () => {
     if (!overs.length) { toast('当前没有逾期任务，无需确认'); return; }
-    root.querySelector('#ackInfo').innerHTML = `将把当前 <b>${overs.length}</b> 条逾期任务标记为「逾期已确认」（涉及 ${new Set(overs.map(t => t.clientName)).size} 家客户）`;
+    root.querySelector('#ackInfo').innerHTML = `将把当前 <b>${overs.length}</b> 条逾期任务确认为「服务已完成」（涉及 ${new Set(overs.map(t => t.clientName)).size} 家客户）`;
     root.querySelector('#ackMask').classList.add('on');
   };
   root.querySelector('#ackCancel').onclick = () => root.querySelector('#ackMask').classList.remove('on');
   root.querySelector('#ackOk').onclick = async () => {
     for (const t of overs) {
-      t.ack = { by: me, at: new Date().toISOString().slice(0, 10) };
+      t.state = 'done'; t.doneAt = today; t.evidence = '手动确认服务'; delete t.ack;
       await store.upsert('monthTasks', t);
     }
     await reloadMonth();
     root.querySelector('#ackMask').classList.remove('on');
-    toast(`✓ 已手动确认 ${overs.length} 条逾期任务，逾期预警已更新`);
+    toast(`✅ 已确认服务 ${overs.length} 条任务，逾期预警已更新`);
     render(document.getElementById('view'), ctx);
   };
-  // 单条手动确认
+  // 单条手动确认服务
   root.querySelectorAll('[data-ack]').forEach(b => b.onclick = async () => {
     const t = state.tasks.find(x => x._id === b.dataset.ack);
     if (!t) return;
-    t.ack = { by: me, at: new Date().toISOString().slice(0, 10) };
+    t.state = 'done'; t.doneAt = today; t.evidence = '手动确认服务'; delete t.ack;
     await store.upsert('monthTasks', t);
     await reloadMonth();
-    toast(`✋ 已确认：「${t.clientName} · ${t.name}」不再计入逾期预警`);
+    toast(`✅ 已确认服务：「${t.clientName} · ${t.name}」`);
     render(document.getElementById('view'), ctx);
   });
   root.querySelectorAll('tr[data-jump]').forEach(tr => tr.onclick = () => ctx.jumpTask(tr.dataset.jump));

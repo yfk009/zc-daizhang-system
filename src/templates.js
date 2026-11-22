@@ -257,6 +257,7 @@ export function buildMonthTasks(month, customers, ownersMap, opts = {}) {
 export function unitCount(t) { return t.type === 'batch' ? (t.checklist ? t.checklist.length : 0) : 1; }
 export function unitDone(t) {
   if (t.type !== 'batch') return t.state === 'done' ? 1 : 0;
+  if (t.state === 'done') return t.checklist ? t.checklist.length : 0; // 整单手动确认服务=全量计入完成
   if (!t.checklist) return 0;
   return t.checklist.filter(x => x.done).length;
 }

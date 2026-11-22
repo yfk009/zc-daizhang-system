@@ -1,5 +1,5 @@
 // 任务清单视图：筛选 / 打勾（凭证）/ 批量清单 / 铁律阻塞 / 升级
-import { el, esc, toast, isOverdue } from '../ui.js';
+import { el, esc, toast, isOverdue, todayStr } from '../ui.js';
 import { state, reloadMonth, taxOf, getUser } from '../app-state.js';
 import { store } from '../db.js';
 import { EVIDENCE_TYPES, unitCount, unitDone, TIERS } from '../templates.js';
@@ -76,7 +76,7 @@ function draw() {
       <td>W${t.week}</td><td>${esc(t.clientName)}</td>
       <td><span class="tag ${t.tier}">${t.tier}</span></td>
       <td>${esc(t.name)}</td><td>${state.month}-${String(t.due).padStart(2,'0')}</td>
-      <td>${esc(t.owner)}</td><td><span class="st ${cl}">${txt}</span></td>
+      <td>${esc(t.owner)}</td><td><select class="st-sel" data-st="${t._id}">${stOptions(cl)}</select></td>
       <td>${opsHtml(t)}</td></tr>`);
     if (t.type === 'batch' && expandedBatch === t._id) {
       for (const item of (t.checklist || [])) {
@@ -92,6 +92,14 @@ function draw() {
 
   tb.querySelectorAll('button[data-act]').forEach(b => b.onclick = () => handle(b.dataset, b.dataset.act));
   tb.querySelectorAll('input[data-bid]').forEach(c => c.onchange = () => toggleBatchItem(c.dataset.bid, c.dataset.cid));
+  tb.querySelectorAll('select[data-st]').forEach(sel => sel.onchange = () => setManualState(sel.dataset.st, sel.value));
+}
+
+// 状态手动调整下拉：待办/已完成/逾期已确认/问题 均可手动设置；受阻为系统铁律自动态（只展示，不在选项中）
+function stOptions(cl) {
+  const opts = [['todo', '⚪ 待办'], ['done', '✅ 已完成'], ['ack', '🟣 逾期已确认'], ['issue', '⚑ 问题']];
+  return opts.map(([v, label]) => `<option value="${v}" ${cl === v ? 'selected' : ''}>${label}</option>`).join('')
+    + (cl === 'blocked' ? '<option value="blocked" selected disabled>🟠 受阻（税金未确认·自动）</option>' : '');
 }
 
 function opsHtml(t) {
@@ -107,8 +115,6 @@ function opsHtml(t) {
     if (['urge','taxconfirm','brief','variance','budget'].includes(t.key))
       btns.push(`<button class="btn sm ghost" data-act="dlv" data-id="${t._id}">生成交付物</button>`);
   }
-  if (cl === 'overdue') btns.push(`<button class="btn sm ghost" data-act="ack" data-id="${t._id}">✋ 确认逾期</button>`);
-  if (cl === 'ack') btns.push(`<button class="btn sm ghost" data-act="unack" data-id="${t._id}">↩ 撤销确认</button>`);
   return btns.join(' ');
 }
 
@@ -126,6 +132,30 @@ async function handle(ds, act) {
 let _goDlv = null;
 export function setDeliverablesJump(fn){ _goDlv = fn; }
 function ctxGoDeliverables(clientId){ if(_goDlv) _goDlv(clientId); }
+
+async function setManualState(id, v) {
+  const t = state.tasks.find(x => x._id === id);
+  if (!t) return;
+  const me = getUser()?.name || '未知';
+  const today = todayStr();
+  if (v === 'done') {
+    t.state = 'done'; t.doneAt = today; t.evidence = '手动确认服务'; delete t.ack;
+    toast(`✅ 已确认服务：${t.clientName || ''} ${t.name}`);
+  } else if (v === 'todo') {
+    t.state = 'todo'; delete t.ack; delete t.doneAt; delete t.evidence;
+    toast('已改回待办');
+  } else if (v === 'issue') {
+    t.state = 'issue'; delete t.ack;
+    toast('⚑ 已手动标记问题（转老板）');
+  } else if (v === 'ack') {
+    t.ack = { by: me, at: today };
+    if (t.state === 'issue' || t.state === 'done') t.state = 'todo';
+    toast('🟣 已标记为逾期已确认（不再计入逾期预警，可随时改回）');
+  }
+  await store.upsert('monthTasks', t);
+  await reloadMonth();
+  draw();
+}
 
 async function toggleBatchItem(bid, cid) {
   const t = state.tasks.find(x => x._id === bid);
