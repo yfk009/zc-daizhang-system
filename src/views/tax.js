@@ -2,7 +2,7 @@
 import { el, esc, toast } from '../ui.js';
 import { state, reloadMonth, taxOf, finOf, prevDataMonth, getUser } from '../app-state.js';
 import { store } from '../db.js';
-import { OTHER_TAXES, othersSum } from '../taxkit.js';
+import { OTHER_TAXES, othersSum, partsSum } from '../taxkit.js';
 
 let editClient = null;
 // 弹窗内「其他税种」临时编辑副本（点保存才写回 tc.amounts.others）
@@ -55,7 +55,7 @@ function othersCellHtml(c, tc, locked) {
     <option value="">＋ 其他税种</option>${opts.map(n => `<option>${n}</option>`).join('')}</select>`;
   if (locked) {
     return others.length
-      ? others.map(o => `<div class="otrow"><span class="otname">${esc(o.name)}</span><span class="otamt-txt">${o.amt ? '¥' + (+o.amt).toLocaleString() : '—'}</span></div>`).join('')
+      ? others.map(o => `<div class="otrow"><span class="otname">${esc(o.name)}</span><span class="otamt-txt">¥${(+o.amt || 0).toLocaleString()}</span></div>`).join('')
       : '<span class="muted">—</span>';
   }
   const rows = others.map((o, i) => `<div class="otrow" data-i="${i}">
@@ -122,6 +122,9 @@ function maybeResetAmounts(tc) {
   if (tc.state === 'ready') tc.state = 'draft';
 }
 
+// 已录金额一律显示数值（输 0 也显示 ¥0，不再显示横杠）；整行未录金额才显示 —
+const money = v => '¥' + (+v || 0).toLocaleString();
+
 function rowHtml(c, dm) {
   const tc = taxOf(c._id);
   const fin = finOf(c._id, dm);
@@ -150,11 +153,11 @@ function rowHtml(c, dm) {
 
   return `<tr class="${tc && tc.sentAt && tc.state !== 'confirmed' ? 'blocked' : ''}">
     <td>${esc(c.name)}</td><td><span class="tag ${c.tier}">${c.tier}</span></td>
-    <td>${a && a.vat ? '¥' + a.vat.toLocaleString() : '—'}</td>
-    <td>${a && a.sur ? '¥' + a.sur.toLocaleString() : '—'}</td>
-    <td>${a && a.it ? '¥' + a.it.toLocaleString() : '—'}</td>
-    <td>${a && a.cit ? '¥' + a.cit.toLocaleString() : '—'}</td>
-    <td>${a && a.stamp ? '¥' + a.stamp.toLocaleString() : '—'}</td>
+    <td>${a ? money(a.vat) : '—'}</td>
+    <td>${a ? money(a.sur) : '—'}</td>
+    <td>${a ? money(a.it) : '—'}</td>
+    <td>${a ? money(a.cit) : '—'}</td>
+    <td>${a ? money(a.stamp) : '—'}</td>
     <td class="otcell">${othersCellHtml(c, tc, locked)}</td>
     <td><b class="taxtotal" style="color:#b91c1c">${total != null ? '¥' + Number(total).toLocaleString() : '—'}</b>${importTag}</td>
     <td>${stHtml}</td><td class="muted">${confInfo}</td><td>${acts.join(' ')}</td></tr>`;
@@ -289,7 +292,8 @@ async function saveAmounts() {
   tc.amounts = {};
   ['vat','sur','it','cit','stamp','total'].forEach(k => { tc.amounts[k] = parseFloat(document.getElementById('amt_' + k).value) || 0; });
   tc.amounts.others = mOthers.filter(o => o.name);
-  if (!tc.amounts.total) { document.getElementById('taxMask').classList.remove('on'); toast('请填写合计金额'); return; }
+  // 合计留空或 0 时自动取各项之和（全 0 记录同样允许保存——输什么存什么）
+  if (!+tc.amounts.total) tc.amounts.total = partsSum(tc.amounts);
   if (tc.state === 'draft') tc.state = 'ready';
   await store.upsert('taxConfirm', tc);
   await reloadMonth();

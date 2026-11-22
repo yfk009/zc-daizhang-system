@@ -41,7 +41,7 @@ export function render(root, ctx) {
   draw(root, ctx);
 }
 
-export function focusClient(clientId) { if (clientId) curClient = clientId; }
+export function focusClient(clientId, type) { if (clientId) curClient = clientId; if (type) curType = type; }
 
 function draw(root, ctx) {
   const c = state.customers.find(x => x._id === curClient);
@@ -77,6 +77,12 @@ function urgeHtml(c, m) {
 }
 
 /* ---------- 税金确认单 ---------- */
+// 五项固定税费（正式路径只读展示、手工路径可输入），与税金确认页列一致
+const FIXED_ITEMS = [
+  ['vat', '增值税'], ['sur', '城建税及教育费附加'], ['it', '个人所得税'],
+  ['cit', '企业所得税（预缴）'], ['stamp', '印花税'],
+];
+
 function taxHtml(c, m) {
   const tc = taxOf(c._id);
   const a = (tc && tc.amounts) || null;
@@ -86,11 +92,9 @@ function taxHtml(c, m) {
   const opts = OTHER_TAXES.filter(n => !others.find(o => o.name === n));
   const warn = !a ? '<div class="banner" style="margin:0 0 12px">该户尚未在「税金确认」页正式录入金额——以下可先手工填写出图，正式确认请回税金确认页录入。</div>' : '';
   return `${warn}<h2>🧾 ${state.month} 税金确认单</h2><div class="sub">${esc(c.name)} · 请回复"确认"后我们再申报</div>
-  ${numInput('vat', vals.vat, '增值税')}
-  ${numInput('sur', vals.sur, '城建税及教育费附加')}
-  ${numInput('it', vals.it, '个人所得税')}
-  ${numInput('cit', vals.cit, '企业所得税（预缴）')}
-  ${numInput('stamp', vals.stamp, '印花税')}
+  ${formal
+    ? FIXED_ITEMS.map(([k, label]) => `<div class="row"><span>${label}</span><span><b>¥${fmt(vals[k] || 0)}</b></span></div>`).join('')
+    : FIXED_ITEMS.map(([k, label]) => numInput(k, vals[k], label)).join('')}
   ${others.map((o, i) => formal
     ? `<div class="row"><span>${esc(o.name)}</span><span><b>¥${fmt(o.amt || 0)}</b></span></div>`
     : `<div class="row"><span>${esc(o.name)}</span><span><input class="mini-input" data-m="othAmt_${i}" type="number" value="${o.amt ?? ''}" placeholder="手工录入"> <button class="btn sm ghost" data-othdel="${i}" type="button">✕ 移除</button></span></div>`).join('')}
@@ -99,6 +103,7 @@ function taxHtml(c, m) {
   <div class="msgbox" style="margin-top:14px">温馨提示：请确保扣款账户余额充足。回复"确认"即视为同意按此金额申报缴款；如对金额有疑问，请随时电话沟通。</div>
   <div class="copybar">
     <button class="btn" data-w="img">🖼️ 生成图片</button>
+    <button class="btn" data-w="copyTax">📋 复制话术</button>
     <button class="btn ghost" data-w="sentTax">已发群，登记发送</button>
   </div>`;
 }
@@ -168,6 +173,30 @@ function varianceHtml(c, m, fin, dm) {
 }
 
 /* ---------- 事件 ---------- */
+// 税金确认话术：正式金额（税金确认页录入）优先，未录入回手工值；逐项带数字，输 0 也显示 0
+function taxScriptText(c) {
+  const tc = taxOf(c._id);
+  const a = tc && tc.amounts;
+  const m = manual[c._id] || {};
+  const others = a ? (a.others || []) : (m.otherList || []);
+  const v = a || { vat: m.vat, sur: m.sur, it: m.it, cit: m.cit, stamp: m.stamp };
+  const total = a ? (+a.total || 0) : dlvTaxTotal(m);
+  const yuan = n => '¥' + (+n || 0).toLocaleString('zh-CN');
+  const lines = [
+    `🧾【辫子哥代账 · ${state.month} 税金确认单】`,
+    `${c.name}`,
+    ``,
+    `${state.month.slice(5)} 月应缴税金如下，请您核对：`,
+    ...FIXED_ITEMS.map(([k, label]) => `· ${label}：${yuan(v[k])}`),
+    ...others.map(o => `· ${o.name}：${yuan(o.amt)}`),
+    `——————————`,
+    `· 本月合计应缴：${yuan(total)}`,
+    ``,
+    `温馨提示：请确保扣款账户余额充足。回复"确认"即视为同意按此金额申报缴款；如对金额有疑问，请随时电话沟通。`,
+  ];
+  return lines.join('\n');
+}
+
 // 确认单合计 = 五项明细 + 其他税种之和
 function dlvTaxTotal(m) {
   return ['vat', 'sur', 'it', 'cit', 'stamp'].reduce((s, k) => s + (+m[k] || 0), 0) + othersSum({ others: m.otherList });
@@ -175,6 +204,8 @@ function dlvTaxTotal(m) {
 
 function wire(root, ctx, c) {
   const paper = root.querySelector('#dlvPaper');
+  // 2026-11-01 重构时误删的绑定：生成图片/复制话术/已发群/回填任务 全部 data-w 按钮的点击入口
+  paper.querySelectorAll('button[data-w]').forEach(b => b.onclick = () => doAction(b.dataset.w, c, ctx, root));
   paper.querySelectorAll('input[data-m]').forEach(inp => inp.onchange = () => {
     const m = manual[c._id] || (manual[c._id] = {});
     const k = inp.dataset.m;
@@ -218,8 +249,22 @@ async function doAction(w, c, ctx, root) {
   }
   if (w === 'img') {
     try {
+      // 克隆画纸出图：剥掉按钮/下拉/横幅，输入框转为数值文本，保证图片是干净的确认单卡片
+      const src = document.getElementById('dlvPaper');
+      const clone = src.cloneNode(true);
+      clone.querySelectorAll('.copybar, .banner, button, select').forEach(n => n.remove());
+      clone.querySelectorAll('input').forEach(inp => {
+        const s = document.createElement('b');
+        s.textContent = inp.value || '0';
+        inp.replaceWith(s);
+      });
+      const holder = document.createElement('div');
+      holder.style.cssText = `position:fixed;left:-9999px;top:0;background:#fff;width:${src.offsetWidth}px;`;
+      holder.appendChild(clone);
+      document.body.appendChild(holder);
       const mod = await import('html2canvas');
-      const canvas = await (mod.default || mod)(document.getElementById('dlvPaper'), { scale: 2, backgroundColor: '#ffffff' });
+      const canvas = await (mod.default || mod)(holder, { scale: 2, backgroundColor: '#ffffff' });
+      holder.remove();
       const a = document.createElement('a');
       a.download = `${c.name}_${curType}_${state.month}.png`;
       a.href = canvas.toDataURL('image/png');
@@ -227,11 +272,16 @@ async function doAction(w, c, ctx, root) {
       toast('图片已生成下载，发微信群即可 📤');
     } catch (e) { console.error(e); toast('出图失败，可截图代替'); }
   }
+  if (w === 'copyTax') {
+    const txt = taxScriptText(c);
+    try { await navigator.clipboard.writeText(txt); toast('税金确认话术已复制，去微信粘贴发送 ✓'); }
+    catch { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast('话术已复制 ✓'); }
+  }
   if (w === 'sentTax' || w === 'doneUrg' || w === 'doneBrief' || w === 'doneBudget' || w === 'doneVariance' || w === 'saveBudget') {
     if (w === 'saveBudget') { await saveBudget(c); return; }
     if (w === 'sentTax') {
       let tc = taxOf(c._id);
-      if (!tc) { tc = { _id: `x_${state.month}_${c._id}`, month: state.month, clientId: c._id, clientName: c.name, state: 'ready', amounts: { total: m.total || 0 } }; }
+      if (!tc) { tc = { _id: `x_${state.month}_${c._id}`, month: state.month, clientId: c._id, clientName: c.name, state: 'ready', amounts: { vat: m.vat || 0, sur: m.sur || 0, it: m.it || 0, cit: m.cit || 0, stamp: m.stamp || 0, total: dlvTaxTotal(m), others: m.otherList || [] } }; }
       tc.sentAt = new Date().toISOString().slice(0, 10);
       await store.upsert('taxConfirm', tc);
       await reloadMonth(); toast('已登记发送，等待客户回复'); ctx.refreshHeader?.(); return;

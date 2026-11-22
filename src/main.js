@@ -145,8 +145,10 @@ async function boot2() {
     <div class="mode-badge" id="modeBadge"></div>`;
   renderHeader();
   drawNav();
-  tasks.setDeliverablesJump((clientId) => { switchTab(4); deliverables.focusClient(clientId); });
-  tax.setJump((clientId) => { switchTab(4); deliverables.focusClient(clientId); });
+  // 先设交付物页的客户/类型再切标签，保证「生成确认单」落到该客户税金确认单
+  const jumpDlv = (clientId, type) => { deliverables.focusClient(clientId, type); switchTab(4); };
+  tasks.setDeliverablesJump((clientId) => jumpDlv(clientId));
+  tax.setJump((clientId) => jumpDlv(clientId, 'tax'));
   mount();
   updateBadge();
   const badge = document.getElementById('modeBadge');
