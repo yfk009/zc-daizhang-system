@@ -28,6 +28,7 @@ export async function render(root, ctx) {
   const filedDone = s1d + fd;
   // 税金确认
   const actives = state.customers.filter(c => !c.archived && c.tier !== 'S1');
+  const totalActive = state.customers.filter(c => !c.archived).length;
   const confirmed = actives.filter(c => { const tc = state.tax.find(x => x.clientId === c._id); return tc && tc.state === 'confirmed'; }).length;
   // 逾期/受阻/问题
   const bads = state.tasks.filter(t => ['overdue', 'blocked', 'issue'].includes(vstate(t)[0]));
@@ -42,6 +43,7 @@ export async function render(root, ctx) {
     <div class="card ${bads.length ? 'warn' : ''}"><div class="k">逾期 / 受阻 / 问题</div><div class="v">${bads.length}<small> 项</small></div>${ackN ? `<div class="muted" style="font-size:11px;margin-top:4px">另有 ${ackN} 条逾期已手动确认</div>` : ''}</div>
   </div>
   <div class="tiers">
+    <div class="tiercard all"><div class="n">${totalActive} 家</div><div class="d">全部家数 · 在服客户</div><div class="p">全部任务完成 <b>${total ? Math.round(done / total * 100) : 0}%</b>（${done}/${total} 项）</div></div>
     ${['S5', 'S4', 'S3', 'S2', 'S1'].map(tier => {
       const ts = state.tasks.filter(t => t.tier === tier);
       const d = ts.reduce((a, t) => a + unitDone(t), 0), n = ts.reduce((a, t) => a + unitCount(t), 0);

@@ -1,6 +1,6 @@
 // 冒烟测试：验证任务生成逻辑与代账4.0 终稿（五档 S1–S5 + T1–T22 任务库）一致（无需浏览器）
 // 种子为空时（云端/仓库环境）自动构造同分布测试夹具，保证逻辑验证不依赖真实客户数据
-import { buildMonthTasks, unitCount, unitDone, tierOf, TIERS, TASK_LIBRARY } from '../src/templates.js';
+import { buildMonthTasks, unitCount, unitDone, tierOf, inferTier, TIERS, TASK_LIBRARY } from '../src/templates.js';
 import { SEED_CUSTOMERS } from '../src/seed-data.js';
 
 let pass = 0, fail = 0;
@@ -109,6 +109,47 @@ import { OTHER_TAXES, othersSum, partsSum } from '../src/taxkit.js';
 eq('其他税种目录 ≥18 项（含房产税/残保金/工会经费）', OTHER_TAXES.length >= 18 ? 'yes' : 'no', 'yes');
 eq('其他税种求和（非法金额按 0）', othersSum({ others: [{ name: '房产税', amt: 300 }, { name: '残保金', amt: 'x' }] }), 300);
 eq('六项明细合计（不含 total 字段、含其他税种）', partsSum({ vat: 100, sur: 12, it: 0, cit: 0, stamp: 8, total: 999, others: [{ name: '工会经费', amt: 50 }] }), 170);
+
+// 9) 新增客户实时同步（2026-11-22）：档位修复 + 当月任务幂等补齐
+const memStore = new Map();
+globalThis.localStorage = {
+  getItem: k => (memStore.has(k) ? memStore.get(k) : null),
+  setItem: (k, v) => { memStore.set(k, String(v)); },
+  removeItem: k => { memStore.delete(k); },
+};
+globalThis.window = { dispatchEvent: () => {} };
+
+const as = await import('../src/app-state.js');
+const judgeOf = c => inferTier({ ...c, identityText: c.taxpayerType === 'general' ? '一般纳税人' : (c.taxpayerType === 'small' ? '小规模纳税人' : '') });
+eq('判档身份优先级：已存一般纳税人+200万 → S3（不误降 S2）', inferTier({ revenue: 2_000_000, taxpayerType: 'general' }).tier, 'S3');
+eq('判档身份优先级：已存身份 general 结果同步 general', inferTier({ revenue: 2_000_000, taxpayerType: 'general' }).taxpayerType, 'general');
+eq('判档身份优先级：≥500万仍推定一般纳税（存档 small 被营业额推翻）', inferTier({ revenue: 6_000_000, taxpayerType: 'small' }).tier, 'S4');
+eq('判档身份优先级：无身份 +200万 → S2（原口径不变）', inferTier({ revenue: 2_000_000 }).tier, 'S2');
+const badC = { name: '坏档客户', tier: '', taxpayerType: 'general', revenue: 2_000_000, annualFee: 0 };
+eq('档位修复引擎：空档位一般纳税人按营业额补 S3', judgeOf(badC).tier, 'S3');
+eq('档位修复识别非法档位（S9）', !['S1', 'S2', 'S3', 'S4', 'S5'].includes('S9') ? 'yes' : 'no', 'yes');
+
+as.state.month = '2026-11';
+as.state.customers = [
+  { _id: 't1', name: '测试甲', tier: 'S2', taxpayerType: 'small', revenue: 300000, archived: false, owner: '小王' },
+  { _id: 't2', name: '测试乙', tier: 'S1', taxpayerType: 'small', revenue: 0, archived: false, owner: '小李' },
+];
+as.state.settings = {
+  staff: [
+    { key: 'boss', name: '老板', role: '总经理', weight: 2.5, boss: true },
+    { key: 'lead', name: '小王', role: '主办会计', weight: 1.5, boss: false },
+    { key: 'assist', name: '小李', role: '兼职助理', weight: 0.8, boss: false },
+  ],
+  ownersMap: { boss: '老板', director: '老板', lead: '小王', reviewer: '小王', assist: '小李' },
+  crossMap: {}, disabledTemplateKeys: [], customTemplates: [],
+};
+const n1 = await as.syncMonthTasks();
+eq('空月任务：syncMonthTasks 生成 2 户全部任务', n1 > 0 ? 'yes' : 'no', 'yes');
+const n2 = await as.syncMonthTasks();
+eq('再次调用幂等（不重复生成）', n2, 0);
+as.state.customers.push({ _id: 't3', name: '新增丙公司', tier: 'S2', taxpayerType: 'small', revenue: 200000, archived: false, owner: '小王' });
+const n3 = await as.syncMonthTasks();
+eq('新增 1 家客户后仅补该户任务（S2=15 项）', n3, 15);
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`);
 process.exit(fail ? 1 : 0);

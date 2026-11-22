@@ -1,6 +1,6 @@
 // 设置：团队与角色映射 / 阿米巴参数 / 凭证开关 / 数据备份 / 种子初始化
 import { esc, toast } from '../ui.js';
-import { state, loadAll, reloadMonth, seedCustomers } from '../app-state.js';
+import { state, loadAll, reloadMonth, seedCustomers, syncMonthTasks } from '../app-state.js';
 import { store, exportAllLocal, importAllLocal, wipeAll, getUser, setUser } from '../db.js';
 import { isServerMode, aiChat, archiveBackup, aiGetConfig, aiSaveConfig, aiTestConfig, refreshHealth } from '../api.js';
 import { parseClientTemplate, planClientImport } from '../client-template.js';
@@ -231,9 +231,14 @@ export function render(root, ctx) {
       try {
         await store.upsertMany('customers', [...plan.creates, ...plan.updates]);
         await loadAll();
+        let addedTasks = 0;
+        if (plan.creates.length) {
+          // 新导入客户立即进入当月工作流：幂等补齐当月缺失任务
+          try { addedTasks = await syncMonthTasks(); } catch (e) { console.error(e); }
+        }
         tplPlan = null;
         prev.style.display = 'none';
-        toast(`✓ 导入完成：新增 ${plan.creates.length} 户、更新 ${plan.updates.length} 户，客户库共 ${state.customers.length} 家`);
+        toast(`✓ 导入完成：新增 ${plan.creates.length} 户、更新 ${plan.updates.length} 户，客户库共 ${state.customers.length} 家${addedTasks ? `，已自动补入当月任务 ${addedTasks} 项` : ''}`);
         window.__rerender?.();
       } catch (err) { btn.disabled = false; toast('导入失败：' + err.message); }
     };
@@ -551,8 +556,28 @@ function drawStaff(root, ctx) {
   });
   root.querySelectorAll('#stTb input[data-si]').forEach(inp => inp.onchange = async () => {
     const p = s.staff[+inp.dataset.si];
+    const old = p[inp.dataset.f];
     p[inp.dataset.f] = inp.dataset.f === 'weight' ? (parseFloat(inp.value) || 0) : inp.value;
-    await store.upsert('settings', s); toast('已保存');
+    // 改名跟随：角色映射/互检表/客户负责团队/本月任务里的旧名一并替换（与删人承接同一口径）
+    if (inp.dataset.f === 'name' && old && old !== p.name) {
+      for (const k of Object.keys(s.ownersMap)) if (s.ownersMap[k] === old) s.ownersMap[k] = p.name;
+      if (s.crossMap) {
+        if (s.crossMap[old] !== undefined) { s.crossMap[p.name] = s.crossMap[old]; delete s.crossMap[old]; }
+        for (const k of Object.keys(s.crossMap)) if (s.crossMap[k] === old) s.crossMap[k] = p.name;
+      }
+      for (const c of state.customers) {
+        if (Array.isArray(c.owners)) c.owners = c.owners.map(n => n === old ? p.name : n);
+        if (c.owner === old) c.owner = c.owners[0] || p.name;
+      }
+      const tasks = await store.list('monthTasks', { month: state.month });
+      for (const t of tasks) {
+        if (t.owner !== old) continue;
+        t.owner = p.name;
+        await store.upsert('monthTasks', t);
+      }
+      await store.upsertMany('customers', state.customers);
+    }
+    await store.upsert('settings', s); toast(old !== p.name && inp.dataset.f === 'name' ? '已保存（相关映射/客户负责人/本月任务已同步改名）' : '已保存');
   });
   root.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
     const victim = s.staff[+b.dataset.del];

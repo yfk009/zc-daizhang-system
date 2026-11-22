@@ -28,7 +28,7 @@ main { padding:18px 22px 60px; max-width:1320px; margin:0 auto; width:100%; flex
 
 .panel { background:#fff; border-radius:12px; padding:17px 19px; box-shadow:0 1px 3px rgba(0,0,0,.06); margin-bottom:15px; overflow-x:auto; }
 .panel h3 { font-size:15px; margin-bottom:13px; display:flex; align-items:center; flex-wrap:wrap; }
-.tiers { display:grid; grid-template-columns:repeat(5,1fr); grid-gap:13px; margin-bottom:15px; }
+.tiers { display:grid; grid-template-columns:repeat(6,1fr); grid-gap:13px; margin-bottom:15px; }
 @media (max-width:1020px){ .tiers { grid-template-columns:repeat(2,1fr); } }
 @media (max-width:820px){ .tiers { grid-template-columns:1fr; } }
 .tiercard { border-radius:12px; padding:15px 17px; color:#fff; }
@@ -37,6 +37,7 @@ main { padding:18px 22px 60px; max-width:1320px; margin:0 auto; width:100%; flex
 .tiercard.s3 { background:linear-gradient(135deg,#b91c1c,#ef4444); }
 .tiercard.s2 { background:linear-gradient(135deg,#b45309,#f59e0b); }
 .tiercard.s1 { background:linear-gradient(135deg,#475569,#64748b); }
+.tiercard.all { background:linear-gradient(135deg,#1e3a8a,#3b82f6); }
 .tiercard .n { font-size:23px; font-weight:700; }
 .tiercard .d { font-size:12px; opacity:.92; margin-top:2px; }
 .tiercard .p { margin-top:9px; font-size:12.5px; line-height:1.7; }

@@ -56,7 +56,10 @@ export function inferTier(c = {}) {
     return { tier: best[1], price: best[0], taxpayerType: best[1] === 'S1' || best[1] === 'S2' ? 'small' : 'general' };
   };
   if (rev > 0) {
-    const ttype = idText === 'general' ? 'general' : (idText === 'small' ? 'small' : (rev >= 5000000 ? 'general' : 'small'));
+    // 身份优先级：身份列文本 > 已存纳税人身份（表单/档案）> 营业额≥500万推定一般纳税
+    const ttype = idText === 'general' ? 'general'
+      : idText === 'small' ? 'small'
+        : (c.taxpayerType === 'general' ? 'general' : (rev >= 5000000 ? 'general' : 'small'));
     return { tier: tierOf({ revenue: rev, taxpayerType: ttype }), taxpayerType: ttype, reason: `按年营业额 ${rev >= 10000 ? Math.round(rev / 10000) + '万' : rev} 元` };
   }
   if (idText === 'zero') return { tier: 'S1', taxpayerType: 'small', reason: '按身份：零申报/无经营' };

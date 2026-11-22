@@ -1,7 +1,7 @@
 // 应用状态中枢：月份、数据缓存、设置
 import { store, getUser, setUser } from './db.js';
 import { isServerMode } from './api.js';
-import { tierOf, inferTier } from './templates.js';
+import { tierOf, inferTier, buildMonthTasks, TIER_ORDER } from './templates.js';
 import { monthNow } from './ui.js';
 import { SEED_CUSTOMERS } from './seed-data.js';
 
@@ -41,7 +41,9 @@ export const DEFAULT_SETTINGS = {
 // 数据迁移：v2 = 代账4.0 五档口径（S1–S5 + 纳税人身份 + 5 角色）；v3 = 负责人多人体（owners 数组）
 const SCHEMA_KEY = 'zx_schema_version';
 async function migrateV2() {
-  if (localStorage.getItem(SCHEMA_KEY) === '2') return;
+  // 守卫必须是 ≥2：只判 ==='2' 会让 v2 在 schema 已升到 3 后的每次加载都重跑，
+  // 反复用旧口径盲判客户档位（用户报「新增企业后档位/家数不同步」的根因）
+  if (['2', '3'].includes(localStorage.getItem(SCHEMA_KEY))) return;
   const customers = await store.list('customers');
   let changed = 0;
   for (const c of customers) {
@@ -50,7 +52,8 @@ async function migrateV2() {
     if (!c.taxpayerType) c.taxpayerType = c.tier === 'S3' ? 'general' : 'small';
     if (!c.tierManual) {
       // 统一重判引擎：身份>营业额>记账费>默认，避免空营业额客户被误归 S1
-      const judged = inferTier(c);
+      const idHint = c.taxpayerType === 'general' ? '一般纳税人' : (c.taxpayerType === 'small' ? '小规模纳税人' : '');
+      const judged = inferTier({ ...c, identityText: idHint });
       c.tier = judged.tier;
       c.taxpayerType = judged.taxpayerType;
     }
@@ -78,6 +81,42 @@ async function migrateV3() {
   console.log(`[migrate] v3 负责人多人体：已规范化 ${changed} 家客户`);
 }
 
+// 修复：档位缺失或非法的客户，按统一判档引擎补档，保证「全部家数 = 各档之和」
+async function repairCustomerTiers() {
+  const bad = state.customers.filter(c => !c.tier || !TIER_ORDER.includes(c.tier));
+  if (!bad.length) return 0;
+  for (const c of bad) {
+    // 身份已知时以中文文本透传（inferTier 的 parseIdentityText 只识别中文），避免误改纳税人身份
+    const idHint = c.taxpayerType === 'general' ? '一般纳税人' : (c.taxpayerType === 'small' ? '小规模纳税人' : '');
+    const judged = inferTier({ ...c, identityText: idHint });
+    c.tier = judged.tier;
+    c.taxpayerType = judged.taxpayerType;
+    c.tierReason = judged.reason;
+    await store.upsert('customers', c);
+  }
+  console.log(`[repair] 已修复 ${bad.length} 家客户的缺失/非法档位`);
+  return bad.length;
+}
+
+// 新增/启用客户后调用：幂等补齐当月缺失任务，让新增企业立即进入当月工作流
+export async function syncMonthTasks() {
+  if (!state.customers.filter(c => !c.archived).length) return 0;
+  const s = state.settings;
+  const docs = buildMonthTasks(state.month, state.customers, s.ownersMap, {
+    crossMap: s.crossMap || {},
+    disabledKeys: s.disabledTemplateKeys || [],
+    customTemplates: s.customTemplates || [],
+  });
+  const exist = await store.list('monthTasks', { month: state.month });
+  const existIds = new Set(exist.map(t => t._id));
+  const fresh = docs.filter(d => !existIds.has(d._id));
+  if (fresh.length) {
+    await store.upsertMany('monthTasks', fresh);
+    await reloadMonth();
+  }
+  return fresh.length;
+}
+
 export async function loadAll() {
   await migrateV2();
   await migrateV3();
@@ -89,6 +128,7 @@ export async function loadAll() {
   state.settings.ownersMap = { ...DEFAULT_SETTINGS.ownersMap, ...(state.settings.ownersMap || {}) };
   await ensureBoss();
   state.customers = await store.list('customers');
+  await repairCustomerTiers();
   state.tasks = await store.list('monthTasks', { month: state.month });
   state.tax = await store.list('taxConfirm', { month: state.month });
   state.financials = await store.list('financials');

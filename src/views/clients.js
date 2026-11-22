@@ -1,21 +1,25 @@
 // 客户分层视图：68 家主档 + 编辑 / 调档 / 负责人 / 新增
 import { esc, toast } from '../ui.js';
-import { state, loadAll } from '../app-state.js';
+import { state, loadAll, syncMonthTasks } from '../app-state.js';
 import { store, newId } from '../db.js';
 import { inferTier, TIERS, TIER_ORDER } from '../templates.js';
 
 let curTier = '';
 let q = '';
 let editId = null;
+let showArch = false; // 已归档视图开关
 let editOwners = []; // 编辑中的负责团队（首位=主负责人）
 
 export function render(root, ctx) {
+  const actives = state.customers.filter(c => !c.archived);
+  const archN = state.customers.length - actives.length;
   const list = state.customers.filter(c =>
-    (!curTier || c.tier === curTier) && (!q || c.name.includes(q)))
+    (showArch ? c.archived : !c.archived) && (!curTier || c.tier === curTier) && (!q || c.name.includes(q)))
     .sort((a, b) => (b.revenue || 0) - (a.revenue || 0));
 
   root.innerHTML = `
   <div class="tiers">
+    <div class="tiercard all"><div class="n">${actives.length} 家</div><div class="d">全部家数 · 在服客户</div><div class="p">${archN ? `另有 ${archN} 家已归档` : '新增 / 导入即实时同步'}</div></div>
     ${TIER_ORDER.map(t => {
       const n = state.customers.filter(c => !c.archived && c.tier === t).length;
       return `<div class="tiercard ${t.toLowerCase()}"><div class="n">${n} 家</div><div class="d">${TIERS[t].name} · ${TIERS[t].rule}</div><div class="p">${TIERS[t].monthly}<br>一口价 ¥${TIERS[t].price}/月</div></div>`;
@@ -23,8 +27,9 @@ export function render(root, ctx) {
   </div>
   <div class="panel">
     <div class="filters">
-      <button class="btn ghost sm" data-tf="">全部 ${state.customers.filter(c=>!c.archived).length} 家</button>
+      <button class="btn ghost sm" data-tf="">全部 ${actives.length} 家</button>
       ${TIER_ORDER.map(t => `<button class="btn ghost sm" data-tf="${t}">${t}</button>`).join('')}
+      <button class="btn ghost sm ${showArch ? 'on' : ''}" id="archBtn">📋 已归档 ${archN} 家</button>
       <input id="ctSearch" placeholder="搜索客户名…" value="${esc(q)}" style="flex:1;min-width:140px">
       <button class="btn sm" id="addBtn">＋ 新增客户</button>
     </div>
@@ -49,6 +54,7 @@ export function render(root, ctx) {
   </div></div>`;
 
   root.querySelectorAll('[data-tf]').forEach(b => b.onclick = () => { curTier = b.dataset.tf; render(root, ctx); });
+  root.querySelector('#archBtn').onclick = () => { showArch = !showArch; render(root, ctx); };
   root.querySelector('#ctSearch').oninput = e => { q = e.target.value.trim(); render(root, ctx); };
   root.querySelector('#addBtn').onclick = () => openEdit(null, ctx);
   root.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openEdit(b.dataset.edit, ctx));
@@ -139,6 +145,8 @@ async function save() {
   const v = k => document.getElementById('cf_' + k).value.trim();
   if (!v('name')) { toast('请填写公司名称'); return; }
   let c = editId ? state.customers.find(x => x._id === editId) : { _id: newId('c'), source: '新增' };
+  const isNew = !editId;
+  const wasArchived = !!(editId && c.archived);
   const annualFee = parseFloat(v('annualFee')) || 0;
   Object.assign(c, {
     name: v('name'), taxNo: v('taxNo'),
@@ -168,7 +176,12 @@ async function save() {
   if (!c.ownerRole) c.ownerRole = c.tier === 'S1' ? 'assist' : 'lead';
   await store.upsert('customers', c);
   await loadAll();
+  let addedTasks = 0;
+  if (isNew || (wasArchived && !c.archived)) {
+    // 新增或重新启用：幂等补齐当月任务，新企业立即进入工作流
+    try { addedTasks = await syncMonthTasks(); } catch (e) { console.error(e); }
+  }
   document.getElementById('cMask').classList.remove('on');
-  toast('✓ 已保存：' + c.name);
+  toast('✓ 已保存：' + c.name + (addedTasks ? `（已自动补入当月任务 ${addedTasks} 项）` : ''));
   window.__rerender?.();
 }
