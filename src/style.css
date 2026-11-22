@@ -49,6 +49,7 @@ th { text-align:left; padding:8px 9px; background:#f8fafc; color:#64748b; font-w
 td { padding:8px 9px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
 tr.overdue td { background:#fef2f2; }
 tr.blocked td { background:#fff7ed; }
+tr.ack td { background:#faf5ff; }
 tr.newrow td { background:#f0f9ff; }
 tr.okrow td { background:#ffffff; }
 tr.batch-sub td { background:#fafcff; padding:4px 9px; }
@@ -78,6 +79,7 @@ tr.overdue:hover td, tr.blocked:hover td { filter:brightness(.98); }
 .st.overdue { background:#fee2e2; color:#b91c1c; }
 .st.blocked { background:#ffedd5; color:#c2410c; }
 .st.issue { background:#fce7f3; color:#be185d; }
+.st.ack { background:#ede9fe; color:#6d28d9; }
 
 .btn { border:0; border-radius:7px; padding:6px 13px; cursor:pointer; font-size:13px; background:#2563eb; color:#fff; }
 .btn:hover { background:#1d4ed8; }

@@ -2,7 +2,7 @@
 import { el, esc, toast, isOverdue } from '../ui.js';
 import { state, reloadMonth, taxOf, getUser } from '../app-state.js';
 import { store } from '../db.js';
-import { EVIDENCE_TYPES, unitCount, unitDone } from '../templates.js';
+import { EVIDENCE_TYPES, unitCount, unitDone, TIERS } from '../templates.js';
 
 const filters = { week: '', tier: '', st: '', owner: '', q: '' };
 let expandedBatch = null; // 展开的批量任务 _id
@@ -17,6 +17,7 @@ export function vstate(t) {
   if (t.state === 'done') return ['done', '已完成'];
   if (t.state === 'issue') return ['issue', '问题'];
   if (blockedByTax(t)) return ['blocked', '受阻·未确认'];
+  if (t.ack && isOverdue(state.month, t.due)) return ['ack', '逾期已确认'];
   if (isOverdue(state.month, t.due)) return ['overdue', '逾期'];
   return ['todo', '待办'];
 }
@@ -26,8 +27,8 @@ export function render(root, ctx) {
   <div class="panel">
     <div class="filters">
       <select id="fWeek"><option value="">全部周次</option>${[1,2,3,4].map(w=>`<option value="${w}" ${filters.week==w?'selected':''}>W${w}</option>`).join('')}</select>
-      <select id="fTier"><option value="">全部档位</option><option value="S3" ${filters.tier==='S3'?'selected':''}>S3 实体户</option><option value="S2" ${filters.tier==='S2'?'selected':''}>S2 微型户</option><option value="S1" ${filters.tier==='S1'?'selected':''}>S1 休眠户</option></select>
-      <select id="fState"><option value="">全部状态</option><option value="overdue" ${filters.st==='overdue'?'selected':''}>🔴 逾期</option><option value="blocked" ${filters.st==='blocked'?'selected':''}>🟠 受阻</option><option value="issue" ${filters.st==='issue'?'selected':''}>⚑ 问题</option><option value="todo" ${filters.st==='todo'?'selected':''}>⚪ 待办</option><option value="done" ${filters.st==='done'?'selected':''}>🟢 已完成</option></select>
+      <select id="fTier"><option value="">全部档位</option>${['S5','S4','S3','S2','S1'].map(k=>`<option value="${k}" ${filters.tier===k?'selected':''}>${TIERS[k].name}</option>`).join('')}</select>
+      <select id="fState"><option value="">全部状态</option><option value="overdue" ${filters.st==='overdue'?'selected':''}>🔴 逾期</option><option value="ack" ${filters.st==='ack'?'selected':''}>🟣 逾期已确认</option><option value="blocked" ${filters.st==='blocked'?'selected':''}>🟠 受阻</option><option value="issue" ${filters.st==='issue'?'selected':''}>⚑ 问题</option><option value="todo" ${filters.st==='todo'?'selected':''}>⚪ 待办</option><option value="done" ${filters.st==='done'?'selected':''}>🟢 已完成</option></select>
       <select id="fOwner"><option value="">全部责任人</option>${state.settings.staff.map(s=>`<option ${filters.owner===s.name?'selected':''}>${s.name}</option>`).join('')}</select>
       <input id="fSearch" placeholder="搜索客户名/任务名…" value="${esc(filters.q)}" style="flex:1;min-width:150px">
     </div>
@@ -106,6 +107,8 @@ function opsHtml(t) {
     if (['urge','taxconfirm','brief','variance','budget'].includes(t.key))
       btns.push(`<button class="btn sm ghost" data-act="dlv" data-id="${t._id}">生成交付物</button>`);
   }
+  if (cl === 'overdue') btns.push(`<button class="btn sm ghost" data-act="ack" data-id="${t._id}">✋ 确认逾期</button>`);
+  if (cl === 'ack') btns.push(`<button class="btn sm ghost" data-act="unack" data-id="${t._id}">↩ 撤销确认</button>`);
   return btns.join(' ');
 }
 
@@ -117,6 +120,8 @@ async function handle(ds, act) {
   if (act === 'tax') { document.querySelector('[data-nav="tax"]').click(); }
   if (act === 'dlv') { ctxGoDeliverables(t.clientId); }
   if (act === 'resolve') { t.state = 'todo'; await store.upsert('monthTasks', t); await reloadMonth(); draw(); toast('已恢复待办'); }
+  if (act === 'ack') { t.ack = { by: (getUser()?.name) || '未知', at: new Date().toISOString().slice(0, 10) }; await store.upsert('monthTasks', t); await reloadMonth(); draw(); toast('✋ 已确认逾期：该任务不再计入经营总览的逾期预警（可撤销）'); }
+  if (act === 'unack') { delete t.ack; await store.upsert('monthTasks', t); await reloadMonth(); draw(); toast('已撤销确认，恢复为逾期状态'); }
 }
 let _goDlv = null;
 export function setDeliverablesJump(fn){ _goDlv = fn; }
