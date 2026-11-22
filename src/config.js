@@ -3,4 +3,4 @@
 export const CLOUDBASE_ENV = '';
 
 export const APP_NAME = '辫子哥代账 · 客户服务管理系统';
-export const VERSION = 'v4.4.0 客户总量实时同步 · 新增企业自动进入当月工作流';
+export const VERSION = 'v4.4.1 全局 AI 智能助手 · 客户总量实时同步';

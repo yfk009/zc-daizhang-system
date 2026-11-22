@@ -5,6 +5,7 @@ import { init, getMode, getUser, setUser } from './db.js';
 import { state, loadAll, setMonth, seedCustomers } from './app-state.js';
 import { probe, resume, login, register, logout, switchGuard, isServerMode, getMe, pullData, importServerData, markDirty, pushData } from './api.js';
 import { toast, monthNow, esc } from './ui.js';
+import { initBot } from './bot.js';
 
 import * as overview from './views/overview.js';
 import * as kanban from './views/kanban.js';
@@ -153,6 +154,7 @@ async function boot2() {
   updateBadge();
   const badge = document.getElementById('modeBadge');
   if (badge) badge.onclick = () => { if (isServerMode()) pushData(); };
+  initBot(); // 全局 AI 助手：所有界面右下角悬浮 🤖
 }
 
 /* 云端同步状态 → 底部徽标 */
