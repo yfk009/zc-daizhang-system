@@ -1,8 +1,8 @@
 // 客户分层视图：68 家主档 + 编辑 / 调档 / 负责人 / 新增
 import { esc, toast } from '../ui.js';
-import { state, loadAll, syncMonthTasks } from '../app-state.js';
+import { state, loadAll, syncMonthTasks, reloadMonth } from '../app-state.js';
 import { store, newId } from '../db.js';
-import { inferTier, TIERS, TIER_ORDER } from '../templates.js';
+import { inferTier, TIERS, TIER_ORDER, resolveOwner } from '../templates.js';
 
 let curTier = '';
 let q = '';
@@ -86,7 +86,7 @@ function openEdit(id, ctx) {
     <label style="margin:8px 0 4px;display:block">月记账费（自动核算 = 年记账费 ÷ 12）</label>
     <input id="cf_monthly" type="number" readonly style="width:100%;background:#f8fafc;color:#475569">
     ${F('contact', '联系人')}${F('phone', '联系电话')}
-    <label style="margin:8px 0 4px;display:block">负责团队（可多人；首位为主负责人，任务「谁服务谁做」按主负责人派单）</label>
+    <label style="margin:8px 0 4px;display:block">负责团队（可多人；首位为主负责人，任务「谁服务谁做」按主负责人派单；下拉点选即加入）</label>
     <div id="cf_ownerChips" style="display:flex;flex-wrap:wrap;gap:6px;min-height:26px"></div>
     <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;align-items:center">
       <select id="cf_ownerSel" style="flex:1;min-width:120px">
@@ -138,6 +138,17 @@ function openEdit(id, ctx) {
   document.getElementById('cf_ownerInput').onkeydown = (e) => {
     if (e.key === 'Enter') { e.preventDefault(); addOwner(e.target.value); e.target.value = ''; }
   };
+  // 点选即生效：下拉选中直接加入负责团队，不必再点「＋加入」；手动输入失焦也自动加入
+  document.getElementById('cf_ownerSel').onchange = () => {
+    const sel = document.getElementById('cf_ownerSel');
+    if (!sel.value) return;
+    addOwner(sel.value);
+    sel.value = '';
+  };
+  document.getElementById('cf_ownerInput').onblur = () => {
+    const inp = document.getElementById('cf_ownerInput');
+    if (inp.value.trim()) { addOwner(inp.value); inp.value = ''; }
+  };
   document.getElementById('cMask').classList.add('on');
 }
 
@@ -168,8 +179,9 @@ async function save() {
     c.taxpayerType = judged.taxpayerType;
     c.tierReason = judged.reason;
   }
-  const omv = c.tier === 'S1' ? state.settings.ownersMap.assist : state.settings.ownersMap.lead;
-  if (!c.owner) {
+  // 自动指派默认负责人：仅新增客户；编辑时以弹窗内负责团队为准（清空=尊重清空，不再悄悄恢复旧人）
+  if (isNew && !c.owner) {
+    const omv = c.tier === 'S1' ? state.settings.ownersMap.assist : state.settings.ownersMap.lead;
     const o = (omv && !String(omv).startsWith('__')) ? omv : '';
     if (o) { c.owner = o; c.owners = [o]; }
   }
@@ -181,7 +193,21 @@ async function save() {
     // 新增或重新启用：幂等补齐当月任务，新企业立即进入工作流
     try { addedTasks = await syncMonthTasks(); } catch (e) { console.error(e); }
   }
+  const moved = await resyncClientTasks(c);
   document.getElementById('cMask').classList.remove('on');
-  toast('✓ 已保存：' + c.name + (addedTasks ? `（已自动补入当月任务 ${addedTasks} 项）` : ''));
+  toast('✓ 已保存：' + c.name + (addedTasks ? `（已自动补入当月任务 ${addedTasks} 项）` : '') + (moved ? `；本月 ${moved} 条任务已按新负责人改派` : ''));
   window.__rerender?.();
+}
+
+// 负责人变更时，本月该客户任务按当前派单模式实时改派；返回改派条数
+async function resyncClientTasks(c) {
+  const om = state.settings.ownersMap, cm = state.settings.crossMap || {};
+  let n = 0;
+  for (const t of await store.list('monthTasks', { month: state.month })) {
+    if (t.clientId !== c._id) continue;
+    const target = resolveOwner(om, cm, t.ownerRole, c);
+    if (target && t.owner !== target) { t.owner = target; await store.upsert('monthTasks', t); n++; }
+  }
+  if (n) await reloadMonth();
+  return n;
 }
